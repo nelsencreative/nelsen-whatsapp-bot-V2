@@ -3,6 +3,14 @@ const { formatUptime } = require('../utils/helper');
 const plugins = require('../utils/PluginLoader');
 const { getImage } = require('../utils/helper');
 
+// Normalize prefix for menu display. `config.prefix` is an array of
+// accepted prefix characters (`['!', '.', '/', '#', '?']`). For the
+// menu's help text we render the *primary* prefix (first entry) so
+// users see one consistent example instead of `!,.,/,#,?`.
+const primaryPrefix = Array.isArray(config.prefix)
+    ? config.prefix[0]
+    : config.prefix;
+
 const EXCLUDED_CMDS = [
     'menu',
     'generalmenu',
@@ -18,7 +26,7 @@ const EXCLUDED_CMDS = [
 
 const handler = async (m) => {
     const { command } = m;
-    const p = config.prefix;
+    const p = primaryPrefix;
 
     switch (command.name) {
         case 'menu':
