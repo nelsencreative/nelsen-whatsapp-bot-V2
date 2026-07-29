@@ -205,10 +205,17 @@ async function resolveProfileByPhone(phoneNumber) {
 }
 
 /**
- * Insert a row into `public.notifications`. The Nelsen dashboard has
- * a Realtime listener on `notifications` INSERTs and the
- * `send-notification` Edge Function picks them up to push via FCM
- * to the recipient's `user_profiles.fcm_token`.
+ * Insert a row into `public.notifications`.
+ *
+ * IMPORTANT — what this is NOT for:
+ *   `public.notifications` is the dashboard's INBOX table. INSERTing a
+ *   row here makes it appear in the user's notification bell via the
+ *   `useRealtimeNotifications` hook. It does NOT trigger an FCM push.
+ *
+ *   FCM push is delivered by the `send-notification` Edge Function
+ *   which is called via HTTP (see `triggerFcmPush` below). The Next.js
+ *   inbox actions always do BOTH: an HTTP call to `send-notification`
+ *   (for FCM) AND an INSERT into `notifications` (for inbox history).
  *
  * Returns `{ ok, id }` on success, `{ ok: false, error }` on failure.
  */
@@ -232,6 +239,73 @@ async function createNotification({ recipientId, type, title, body }) {
   return { ok: true, id: data?.id };
 }
 
+/**
+ * Trigger an FCM push via the deployed `send-notification` Supabase
+ * Edge Function. This is THE SAME path the dashboard's Next.js server
+ * actions use — `src/lib/notifications/send.ts` in the main repo —
+ * so the push arrives in the user's mobile app identical to a normal
+ * inbox notification.
+ *
+ * Why we don't just INSERT into `public.notifications`:
+ *   The notifications table is the inbox history — read by the bell
+ *   badge via Realtime. FCM is a separate HTTP roundtrip to the Edge
+ *   Function which itself looks up `user_profiles.fcm_token` and
+ *   pushes via Firebase Admin SDK. Skipping that roundtrip means
+ *   the push never reaches the device.
+ *
+ * Returns `{ ok, messageId? }` on success, `{ ok: false, error }` on
+ * failure.
+ */
+async function triggerFcmPush({ userId, title, body, data }) {
+  if (!userId) return { ok: false, error: "userId is required" };
+  if (!title || !body) {
+    return { ok: false, error: "title and body are required" };
+  }
+
+  const env = loadEnv();
+  if (!env.supabaseUrl) {
+    return { ok: false, error: "SUPABASE_URL not set" };
+  }
+
+  const url = `${env.supabaseUrl.replace(/\/$/, "")}/functions/v1/send-notification`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.supabaseServiceRoleKey}`,
+        apikey: env.supabaseServiceRoleKey,
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        title: String(title),
+        body: String(body),
+        ...(data && typeof data === "object" ? { data } : {}),
+      }),
+      cache: "no-store",
+    });
+
+    const text = await res.text();
+    let parsed = {};
+    try {
+      parsed = text ? JSON.parse(text) : {};
+    } catch {
+      parsed = { raw: text };
+    }
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: parsed?.error || `Edge function returned status ${res.status}`,
+      };
+    }
+    return { ok: true, messageId: parsed?.messageId };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
 module.exports = {
   getSupabase,
   resolveUsername,
@@ -241,4 +315,5 @@ module.exports = {
   setSiteStatus,
   resolveProfileByPhone,
   createNotification,
+  triggerFcmPush,
 };

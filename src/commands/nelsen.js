@@ -34,6 +34,7 @@ const {
     setSiteStatus,
     resolveProfileByPhone,
     createNotification,
+    triggerFcmPush,
 } = require('../lib/supabase');
 const { phoneToJid } = require('../lib/formatter');
 const { loadEnv } = require('../lib/env');
@@ -376,47 +377,81 @@ const handler = async (m) => {
                 log.warn({ err: waError }, '!notif WA send failed');
             }
 
-            // ---- (2) Push notification — INSERT into `notifications`.
-            // Resolve the super-owner's profile id from
-            // `config.superOwner` (digits-only phone). This makes the
-            // push land on the admin's mobile app, not on the user's.
+            // ---- (2) Push notification — same path the Next.js
+            // inbox uses: HTTP POST to the `send-notification` Edge
+            // Function, which reads `user_profiles.fcm_token` and
+            // pushes via Firebase Admin SDK. This is the ONLY path
+            // that actually delivers a real OS-level push to the
+            // user's mobile app.
+            //
+            // We also INSERT into `public.notifications` afterwards
+            // so the bell badge updates via the
+            // `useRealtimeNotifications` hook — same pattern as the
+            // inbox flow (one HTTP push + one inbox row).
             const recipient = await resolveProfileByPhone(config.superOwner);
             let pushResult = null;
+            let inboxResult = null;
+
             if (!recipient) {
-                pushResult = {
-                    ok: false,
-                    error:
-                        `Profile untuk nomor ${config.superOwner} tidak ditemukan di tabel profiles. ` +
-                        'Push notification dilewati — pastikan profile admin sudah punya whatsapp_number yang sama.',
-                };
-                log.warn(
-                    { phone: config.superOwner },
-                    '!notif: super-owner profile not found; skipping push',
-                );
+                const errMsg =
+                    `Profile untuk nomor ${config.superOwner} tidak ditemukan di tabel profiles. ` +
+                    'Pastikan profile admin punya whatsapp_number yang sama dengan config.superOwner.';
+                log.warn({ phone: config.superOwner }, '!notif: super-owner profile not found; skipping push');
+                pushResult = { ok: false, error: errMsg };
             } else {
-                pushResult = await createNotification({
-                    recipientId: recipient.id,
-                    type: 'broadcast',
+                // (2a) FCM push — Edge Function.
+                pushResult = await triggerFcmPush({
+                    userId: recipient.id,
                     title: judul,
                     body: isi,
+                    data: { type: 'broadcast', source: 'whatsapp-bot' },
                 });
                 if (!pushResult.ok) {
-                    log.warn({ err: pushResult.error }, '!notif push insert failed');
+                    log.warn(
+                        { err: pushResult.error, userId: recipient.id },
+                        '!notif FCM push failed',
+                    );
+                }
+
+                // (2b) Inbox row — for the bell badge Realtime feed.
+                // Only attempt if FCM didn't error out with a fatal
+                // user-missing condition; otherwise the inbox row
+                // would just be noise.
+                if (pushResult.ok) {
+                    inboxResult = await createNotification({
+                        recipientId: recipient.id,
+                        type: 'broadcast',
+                        title: judul,
+                        body: isi,
+                    });
+                    if (!inboxResult.ok) {
+                        log.warn(
+                            { err: inboxResult.error },
+                            '!notif inbox insert failed (push already sent)',
+                        );
+                    }
                 }
             }
 
-            // Compose the response. The user wants the notif to
-            // "actually appear in the app", so we explicitly tell
-            // them whether the FCM path succeeded — otherwise it's a
-            // silent failure and they assume it works.
+            // Compose the response — be explicit so the admin knows
+            // whether the push actually reached the device.
             const lines = [];
             if (waOk) lines.push('✅ WhatsApp: terkirim.');
             else lines.push(`❌ WhatsApp: gagal (${waError || 'unknown'}).`);
 
             if (pushResult?.ok) {
-                lines.push(`✅ Push notification: terkirim ke aplikasi (id=${pushResult.id}).`);
+                lines.push(
+                    `✅ Push FCM: terkirim ke aplikasi mobile` +
+                    (pushResult.messageId ? ` (messageId=${pushResult.messageId})` : '') +
+                    '.',
+                );
+                if (inboxResult?.ok) {
+                    lines.push(`✅ Inbox: tersimpan (id=${inboxResult.id}).`);
+                } else if (inboxResult) {
+                    lines.push(`⚠️ Inbox: ${inboxResult.error}`);
+                }
             } else if (pushResult) {
-                lines.push(`⚠️ Push notification: ${pushResult.error}`);
+                lines.push(`❌ Push FCM: ${pushResult.error}`);
             }
 
             return m.reply({ text: lines.join('\n') });
