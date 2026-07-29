@@ -1,21 +1,28 @@
 /**
  * Nelsen Studio commands.
  *
- * Drop-in commands added after the basebot migration:
+ * Drop-in commands added after the basebot migration. The filename
+ * is `nelsen-studio.js` so the auto-generated menu category reads
+ * `nelsen-studio` (the PluginLoader derives the category label from
+ * the basename). Renaming the file is the right way to change the
+ * label — there is no separate display-name field.
  *
- *   !product / .product                       — list active products.
- *   !statusweb / .statusweb                   — show current site status.
- *   !status {mode} / .status {mode}           — toggle status (legacy simple).
- *   !status {fields} / .status {fields}       — full multi-field edit (pipe).
- *   !notif {judul}|{isi} / .notif {judul}|{isi} — admin broadcast to
- *                                                NOTIFY_TARGET_NUMBER AND
- *                                                INSERT into
- *                                                `public.notifications` so
- *                                                the recipient's mobile app
- *                                                receives a real FCM push
- *                                                via the Edge Function.
+ *   !product / .product                          — list active products.
+ *   !promo / .promo                              — active promo count + CTA.
+ *                                                 DM-only; ignored in groups.
+ *   !assets / .assets                            — list assets + CTA.
+ *                                                 Open to everyone.
+ *   !statusweb / .statusweb                      — show current site status.
+ *   !status {mode} / .status {mode}              — toggle status (legacy simple).
+ *   !status {fields} / .status {fields}          — full multi-field edit (pipe).
+ *   !notif {judul}|{isi} / .notif {judul}|{isi}  — admin broadcast. Fans out
+ *                                                  an FCM push to every user
+ *                                                  with a registered
+ *                                                  `fcm_token` (Edge
+ *                                                  Function `send-notification`
+ *                                                  broadcast mode).
  *
- * All commands except `product` are `isSuperOwner`-only.
+ * `promo` and `assets` are public. Everything else is super-owner-only.
  *
  * The pipe character (`|`) is the universal separator for multi-field
  * inputs — it never appears in Indonesian/English product copy, so it
@@ -30,13 +37,15 @@ const config = require('../config');
 const { getImage } = require('../utils/helper');
 const {
     listProducts,
+    listActivePromos,
+    listActiveAssets,
     getSiteStatus,
     setSiteStatus,
     triggerFcmPush,
 } = require('../lib/supabase');
 const { getLogger } = require('../lib/logger');
 
-const log = getLogger().child({ mod: 'commands.nelsen' });
+const log = getLogger().child({ mod: 'commands.nelsen-studio' });
 
 // Display prefix for help text. Use the FIRST entry of the array so
 // users see one consistent example (`!`) instead of `!,.,/,#,?`.
