@@ -80,7 +80,7 @@ const handler = async (m) => {
     // Reading them off `m.command.args` / `m.command.fullArgs` was the
     // root cause of the `Cannot read properties of undefined (reading
     // '0')` crash when running `!status maintance`.
-    const { command, isSuperOwner, Hanz, sender } = m;
+    const { command, isSuperOwner, isGroup, Hanz, sender } = m;
     const args = command?.args || [];
     const fullArgs = command?.fullArgs || '';
 
@@ -133,6 +133,151 @@ const handler = async (m) => {
                 ],
             });
             break;
+        }
+
+        // ────────────────────────────────────────────────────────────
+        case 'promo': {
+            // DM-only, open to everyone.
+            //
+            // Why DM-only: promo count + a single CTA button is a
+            // friendly one-liner that's useful privately but
+            // noisy/repetitive in a group chat. The bot doesn't
+            // react at all in groups (`return` with no reply) so a
+            // user typing `!promo` in a group isn't greeted with
+            // silence followed by confusion; they simply don't see
+            // anything happen, which is the conventional WhatsApp
+            // bot behavior for a private-only command.
+            if (isGroup) {
+                return;
+            }
+
+            const count = await listActivePromos();
+
+            if (!count) {
+                // Empty-state: same banner + footer + CTA as the
+                // success branch, but the headline reads
+                // "Promo tidak tersedia" instead of a count. The
+                // CTA still points at /promos so a future admin
+                // can spin one up and have the bot pick it up
+                // immediately (no restart, no redeploy).
+                return m.sendInteractiveWithImage({
+                    imageSource: getImage('banner'),
+                    text: '❌Promo tidak tersedia',
+                    footer: '> © 2026 Nelsen Creative, All Rights Reserved.',
+                    quoted: m.fakeOrder,
+                    contextInfo: {
+                        mentionedJid: ['0@s.whatsapp.net'],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                    },
+                    buttons: [
+                        {
+                            name: 'cta_url',
+                            buttonParamsJson: JSON.stringify({
+                                display_text: 'Lihat Halaman Promo',
+                                url: 'https://nelsen.web.id/promos',
+                            }),
+                        },
+                    ],
+                });
+            }
+
+            const noun = count === 1 ? 'promo' : 'promo';
+            return m.sendInteractiveWithImage({
+                imageSource: getImage('banner'),
+                text: `🔖Promo tersedia (${count})`,
+                footer: '> © 2026 Nelsen Creative, All Rights Reserved.',
+                quoted: m.fakeOrder,
+                contextInfo: {
+                    mentionedJid: ['0@s.whatsapp.net'],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                },
+                buttons: [
+                    {
+                        name: 'cta_url',
+                        buttonParamsJson: JSON.stringify({
+                            display_text: 'Lihat Halaman Promo',
+                            url: 'https://nelsen.web.id/promos',
+                        }),
+                    },
+                ],
+            });
+        }
+
+        // ────────────────────────────────────────────────────────────
+        case 'assets': {
+            // Open to everyone, including in groups — assets are
+            // public discoverability. (Unlike `promo`, which is
+            // DM-only by spec.)
+            const assets = await listActiveAssets();
+            const total = assets.length;
+
+            if (!total) {
+                // Empty-state — same banner + footer + CTA pattern
+                // as `!promo`.
+                return m.sendInteractiveWithImage({
+                    imageSource: getImage('banner'),
+                    text: '❌Tidak ada assets tersedia saat ini.',
+                    footer: '> © 2026 Nelsen Creative, All Rights Reserved.',
+                    quoted: m.fakeOrder,
+                    contextInfo: {
+                        mentionedJid: ['0@s.whatsapp.net'],
+                        forwardingScore: 999,
+                        isForwarded: true,
+                    },
+                    buttons: [
+                        {
+                            name: 'cta_url',
+                            buttonParamsJson: JSON.stringify({
+                                display_text: 'Lihat Halaman Assets',
+                                url: 'https://nelsen.web.id/assets',
+                            }),
+                        },
+                    ],
+                });
+            }
+
+            // Build the asset list as numbered plain text. Each
+            // entry includes title, description, link, platform,
+            // status. Headline reads "Total asset (N)" per the spec.
+            // Using `IDR <number>` for paid, `IDR 0` for free so
+            // the formatting matches what the web /assets page
+            // shows.
+            const lines = [`Total asset (${total})`, ''];
+            assets.forEach((a, idx) => {
+                const priceLabel = a.status === 'paid' && a.price
+                    ? `IDR ${Number(a.price).toLocaleString('id-ID')}`
+                    : 'IDR 0';
+                lines.push(`${idx + 1}. ${a.title}`);
+                if (a.description) lines.push(`${a.description}`);
+                lines.push(`Link: ${a.link_url}`);
+                lines.push(`Platform: ${a.platform}`);
+                lines.push(`Status: ${a.status === 'paid' ? 'Paid' : 'Free'} (${priceLabel})`);
+                lines.push('');
+            });
+            lines.push('> © 2026 Nelsen Creative, All Rights Reserved.');
+
+            return m.sendInteractiveWithImage({
+                imageSource: getImage('banner'),
+                text: lines.join('\n'),
+                footer: 'Nelsen Studio',
+                quoted: m.fakeOrder,
+                contextInfo: {
+                    mentionedJid: ['0@s.whatsapp.net'],
+                    forwardingScore: 999,
+                    isForwarded: true,
+                },
+                buttons: [
+                    {
+                        name: 'cta_url',
+                        buttonParamsJson: JSON.stringify({
+                            display_text: 'Lihat Halaman Assets',
+                            url: 'https://nelsen.web.id/assets',
+                        }),
+                    },
+                ],
+            });
         }
 
         // ────────────────────────────────────────────────────────────

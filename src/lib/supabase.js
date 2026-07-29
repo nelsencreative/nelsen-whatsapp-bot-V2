@@ -115,6 +115,61 @@ async function listProducts() {
 }
 
 /**
+ * Count active promos for the `!promo` command.
+ *
+ * "Active" means `is_active = true` AND `valid_until` is either NULL or
+ * still in the future. Code-typed and basic promos are both counted —
+ * the bot's response is a one-liner ("Promo tersedia (N)") followed by
+ * a CTA button to /promos, where the full filtering per code / per
+ * eligibility is rendered by the web app.
+ *
+ * Returns a number. Returns `0` on any error so the command can show
+ * the "Promo tidak tersedia" branch instead of crashing.
+ */
+async function listActivePromos() {
+  const sb = getSupabase();
+  // `.not('valid_until', 'lte', now())` matches rows where `valid_until`
+  // IS NULL OR `valid_until` > now(). The second OR is implicit because
+  // `IS NULL` rows pass `not lte now()`.
+  const { count, error } = await sb
+    .from("promos")
+    .select("id", { count: "exact", head: true })
+    .eq("is_active", true)
+    .or("valid_until.is.null,valid_until.gt.now()");
+  if (error) {
+    log.warn({ err: error.message }, "listActivePromos error");
+    return 0;
+  }
+  return count || 0;
+}
+
+/**
+ * List active assets for the `!assets` command.
+ *
+ * Returns the full asset list (active only, ordered by `sort_order`
+ * then `created_at desc`) with the columns the bot needs to render
+ * the WhatsApp list. The number returned matches the in-DB count,
+ * which is what the command's headline reads.
+ *
+ * Returns `[]` on any error so the command can show an empty-state
+ * message instead of crashing.
+ */
+async function listActiveAssets() {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("assets")
+    .select("id, title, description, link_url, platform, status, price, image_url, created_at")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: false });
+  if (error) {
+    log.warn({ err: error.message }, "listActiveAssets error");
+    return [];
+  }
+  return data || [];
+}
+
+/**
  * Read the current website status from the singleton `site_status`
  * table (`id = 1`). Returns one of: `"operational"` | `"maintenance"`,
  * or `null` if the row is missing (treated as operational elsewhere).
@@ -345,6 +400,8 @@ module.exports = {
   resolveUsername,
   resolveProductName,
   listProducts,
+  listActivePromos,
+  listActiveAssets,
   getSiteStatus,
   setSiteStatus,
   resolveProfileByPhone,
