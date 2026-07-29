@@ -141,27 +141,95 @@ async function getSiteStatus() {
  * Set the website status. Updates the singleton row in `site_status`
  * (creating it if missing) and returns `{ ok, status }`.
  *
- * Accepted `value` strings (canonical): `"operational"`, `"maintenance"`.
- * Unknown values are rejected — we don't want typos like `"maintanence"`
- * silently creating a row with garbage data.
+ * `value` accepts:
+ *   - "operational" / "maintenance" — toggles the gate status.
+ *   - `null` — clears the row back to operational (used by `!status off`).
+ *
+ * Optional fields (title, subtitle, description, auto_disable_at) are
+ * written only when provided, so the simple `{status: "maintenance"}`
+ * form leaves the existing copy intact.
  */
-async function setSiteStatus(value) {
+async function setSiteStatus(value, opts = {}) {
   const allowed = ["operational", "maintenance"];
   if (!allowed.includes(value)) {
     return { ok: false, error: `invalid status: ${value}` };
   }
   const sb = getSupabase();
+  const payload = {
+    id: 1,
+    status: value,
+    updated_at: new Date().toISOString(),
+  };
+  if (typeof opts.title === "string" && opts.title.length) payload.title = opts.title;
+  if (typeof opts.subtitle === "string" && opts.subtitle.length) payload.subtitle = opts.subtitle;
+  if (typeof opts.description === "string" && opts.description.length) payload.description = opts.description;
+  if ("auto_disable_at" in opts) payload.auto_disable_at = opts.auto_disable_at; // may be null
+
   const { error } = await sb
     .from("site_status")
-    .upsert(
-      { id: 1, status: value, updated_at: new Date().toISOString() },
-      { onConflict: "id" },
-    );
+    .upsert(payload, { onConflict: "id" });
   if (error) {
     log.warn({ err: error.message }, "setSiteStatus error");
     return { ok: false, error: error.message };
   }
   return { ok: true, status: value };
+}
+
+/**
+ * Look up a user's profile by their WhatsApp number (digits only).
+ * Used by `!notif` to resolve the recipient for the FCM push.
+ *
+ * Returns the profile row `{ id, full_name }` or `null` if no match.
+ */
+async function resolveProfileByPhone(phoneNumber) {
+  if (!phoneNumber) return null;
+  const sb = getSupabase();
+  // Normalize: keep digits only (Indonesian 08xxx → 628xxx).
+  const digits = String(phoneNumber).replace(/\D/g, "");
+  // Try with country-code prefix first, then local 0-prefix.
+  const variants = new Set([digits]);
+  if (digits.startsWith("0")) variants.add("62" + digits.slice(1));
+  if (digits.startsWith("62")) variants.add("0" + digits.slice(2));
+
+  const { data, error } = await sb
+    .from("profiles")
+    .select("id, full_name, whatsapp_number")
+    .in("whatsapp_number", Array.from(variants))
+    .maybeSingle();
+
+  if (error) {
+    log.warn({ err: error.message }, "resolveProfileByPhone error");
+    return null;
+  }
+  return data || null;
+}
+
+/**
+ * Insert a row into `public.notifications`. The Nelsen dashboard has
+ * a Realtime listener on `notifications` INSERTs and the
+ * `send-notification` Edge Function picks them up to push via FCM
+ * to the recipient's `user_profiles.fcm_token`.
+ *
+ * Returns `{ ok, id }` on success, `{ ok: false, error }` on failure.
+ */
+async function createNotification({ recipientId, type, title, body }) {
+  if (!recipientId) return { ok: false, error: "missing recipientId" };
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("notifications")
+    .insert({
+      recipient_id: recipientId,
+      type: type || "broadcast",
+      title: String(title || ""),
+      body: String(body || ""),
+    })
+    .select("id")
+    .single();
+  if (error) {
+    log.warn({ err: error.message }, "createNotification error");
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, id: data?.id };
 }
 
 module.exports = {
@@ -171,4 +239,6 @@ module.exports = {
   listProducts,
   getSiteStatus,
   setSiteStatus,
+  resolveProfileByPhone,
+  createNotification,
 };
