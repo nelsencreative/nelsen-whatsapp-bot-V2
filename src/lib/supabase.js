@@ -309,6 +309,10 @@ async function triggerFcmPush({ userId, title, body, data, broadcast }) {
     }
 
     if (!res.ok) {
+      log.warn(
+        { status: res.status, broadcast: !!broadcast, body: parsed },
+        'triggerFcmPush: edge function returned non-OK',
+      );
       return {
         ok: false,
         error: parsed?.error || `Edge function returned status ${res.status}`,
