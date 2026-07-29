@@ -70,8 +70,7 @@ const path = require('path');
 // Daftar gambar yang tersedia di folder media/
 const MEDIA = {
     logo:    path.join(__dirname, '../media/logo.png'),
-    // tambah gambar lain di sini kalau perlu:
-    // banner: path.join(__dirname, '../../media/banner.png'),
+    banner:  path.join(__dirname, '../media/banner.png'),
 };
 
 /**

@@ -142,9 +142,41 @@ function buildInvoiceSentText(input) {
   ].join("\n");
 }
 
+/**
+ * New user-report notification (e.g. user got blocked and is asking to
+ * be unblocked). Pings `NOTIFY_TARGET_NUMBER` so the admin sees it
+ * immediately and can resolve via the admin panel.
+ *
+ * Per spec:
+ *   ⚠️ REPORT USER
+ *   email: ...
+ *   No WA: ...
+ *   message: ...
+ *   status: pending
+ *
+ * The native button leads to the admin reports page; the body's plain
+ * URL guarantees a tappable link if the button fails to render.
+ */
+function buildReportText(input) {
+  const { email, whatsapp_number, message, status } = input;
+  const lines = [
+    "⚠️ REPORT USER",
+    "",
+    `email: ${email || "(tidak ada)"}`,
+    `No WA: ${whatsapp_number || "(tidak ada)"}`,
+    `message: ${message || "(tidak ada)"}`,
+    `status: ${status || "pending"}`,
+    "",
+    "Buka admin panel: https://nelsen.web.id/admin/reports",
+    SIGNATURE,
+  ];
+  return lines.join("\n");
+}
+
 module.exports = {
   buildNewOrderText,
   buildDeploySuccessText,
   buildDeployFailedText,
   buildInvoiceSentText,
+  buildReportText,
 };

@@ -287,6 +287,112 @@ async function sendTextFallback(Hanz, jid, text) {
     }
 }
 
+/**
+ * Send a `cta_url` button WITH an image header in one message.
+ *
+ * Used by checkout/invoice notifications that need both a banner image
+ * (e.g. `src/media/banner.png`) and a clickable button pointing to
+ * https://nelsen.web.id or the relevant order/invoice page.
+ *
+ * Behaviour:
+ *   - Loads the image once via `prepareWAMessageMedia` and embeds it
+ *     in `header: { hasMediaAttachment: true, ...media }` — same shape
+ *     as the proven `sendInteractiveWithImage` path used by `!menu`.
+ *   - The button is shaped exactly like `sendCtaUrlButton`:
+ *     `{ name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text, url }) }`.
+ *   - On any failure (image upload error, network error, malformed
+ *     payload), falls back to `sendCtaUrlButton` (text + button, no
+ *     image). If THAT also fails, falls back to plain `sendMessage`.
+ *
+ * @param {WASocket} Hanz
+ * @param {string} jid
+ * @param {object} content — {
+ *     text, footer?, imageSource: Buffer | { url }, buttons: [{ text, url }]
+ *   }
+ * @returns {Promise<{ ok, path: 'cta_url_with_image' | 'cta_url' | 'text-fallback' | 'no-socket' | 'no-jid', error? }>}
+ */
+async function sendCtaUrlButtonWithImage(Hanz, jid, content) {
+    const { text, footer = '', imageSource, buttons = [] } = content;
+    const firstBtn = buttons[0] || { text: 'Buka', url: 'https://nelsen.web.id' };
+
+    // Pre-flight (same as sendCtaUrlButton) so a stale socket surfaces a
+    // clear `no-socket` instead of two deep exception traces.
+    if (!Hanz || typeof Hanz.relayMessage !== 'function') {
+        return {
+            ok: false,
+            path: 'no-socket',
+            error: `Hanz socket invalid: ${typeof Hanz}`,
+        };
+    }
+    if (!jid || typeof jid !== 'string' || !jid.includes('@')) {
+        return { ok: false, path: 'no-jid', error: `Invalid jid: ${JSON.stringify(jid)}` };
+    }
+    if (!imageSource) {
+        // No image — defer to the plain cta_url path so callers don't
+        // have to branch.
+        return sendCtaUrlButton(Hanz, jid, { text, footer, buttons });
+    }
+
+    const nativeButtons = [
+        {
+            name: 'cta_url',
+            buttonParamsJson: JSON.stringify({
+                display_text: firstBtn.text,
+                url: firstBtn.url,
+            }),
+        },
+    ];
+
+    try {
+        const { prepareWAMessageMedia } = require('@whiskeysockets/baileys');
+
+        let mediaInput;
+        if (Buffer.isBuffer(imageSource)) {
+            mediaInput = { image: imageSource };
+        } else if (imageSource?.url) {
+            const axios = require('axios');
+            const { data } = await axios.get(imageSource.url, { responseType: 'arraybuffer' });
+            mediaInput = { image: Buffer.from(data) };
+        } else {
+            throw new Error('imageSource harus Buffer atau { url: "..." }');
+        }
+
+        const media = await prepareWAMessageMedia(mediaInput, { upload: Hanz.waUploadToServer });
+
+        const interactiveMsg = proto.Message.InteractiveMessage.fromObject({
+            body: { text },
+            footer: { text: footer },
+            header: { hasMediaAttachment: true, ...media },
+            nativeFlowMessage: { buttons: nativeButtons, messageParamsJson: '' },
+        });
+
+        await relayInteractive(Hanz, jid, buildMessage(jid, interactiveMsg), 'cta_url');
+        return { ok: true, path: 'cta_url_with_image' };
+    } catch (err) {
+        // Image path failed — try text+button, then plain text.
+        const imgErr = err?.message || String(err);
+        try {
+            const r = await sendCtaUrlButton(Hanz, jid, { text, footer, buttons });
+            return {
+                ok: r.ok,
+                path: r.path,
+                error: imgErr,
+            };
+        } catch (err2) {
+            try {
+                await Hanz.sendMessage(jid, { text });
+                return { ok: true, path: 'text-fallback', error: imgErr };
+            } catch (err3) {
+                return {
+                    ok: false,
+                    path: 'text-fallback',
+                    error: `image=[${imgErr}]; cta_url=[${err2?.message || String(err2)}]; text=[${err3?.message || String(err3)}]`,
+                };
+            }
+        }
+    }
+}
+
 module.exports = {
     sendButtons,
     sendListMessage,
@@ -294,5 +400,6 @@ module.exports = {
     sendButtonWithImage,
     sendInteractiveWithImage,
     sendCtaUrlButton,
+    sendCtaUrlButtonWithImage,
     sendTextFallback,
 };

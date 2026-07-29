@@ -122,11 +122,19 @@ function isOwner(sender, msg) {
 
 function parseCommand(text) {
     const { prefix } = config;
+    const prefixes = Array.isArray(prefix) ? prefix : [prefix];
 
-    if (text.startsWith(prefix)) {
-        const args = text.slice(prefix.length).trim().split(/ +/);
+    // Find the first matching prefix character. `String.prototype.startsWith`
+    // coerces an array to its comma-joined form (e.g. "!,.,/,#,?") which
+    // never matches a real message — so we iterate explicitly. The match
+    // also has to be a SINGLE character; multi-char strings (e.g. ".!") are
+    // skipped so we don't accidentally treat ".!menu" as a prefixed
+    // command starting with ".".
+    const leading = text.charAt(0);
+    if (prefixes.includes(leading)) {
+        const args = text.slice(1).trim().split(/ +/);
         const name = args.shift().toLowerCase();
-        return { name, args, fullArgs: args.join(' '), raw: text, hasPrefix: true };
+        return { name, args, fullArgs: args.join(' '), raw: text, hasPrefix: true, prefixChar: leading };
     }
 
     const words = text.trim().split(/ +/);

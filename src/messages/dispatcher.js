@@ -23,13 +23,52 @@ const {
   buildDeploySuccessText,
   buildInvoiceSentText,
   buildNewOrderText,
+  buildReportText,
 } = require("./templates.js");
+const fs = require("fs");
+const path = require("path");
 
 const log = getLogger().child({ mod: "dispatcher" });
 
-const { sendCtaUrlButton, sendTextFallback } = require("../utils/interactiveHelper");
+const {
+  sendCtaUrlButton,
+  sendCtaUrlButtonWithImage,
+  sendTextFallback,
+} = require("../utils/interactiveHelper");
 
 const WEBSITE_URL = "https://nelsen.web.id";
+const ADMIN_REPORTS_URL = "https://nelsen.web.id/admin/reports";
+
+/**
+ * Load the checkout/invoice banner image once at startup.
+ *
+ * Located at `src/media/banner.png` (16:9 ratio). The image is read
+ * into a Buffer the first time the module loads and reused for every
+ * subsequent notification — re-reading from disk per-event would burn
+ * I/O for no reason. If the file is missing, we log a warning once and
+ * fall back to the text-only path (the bot still notifies, just without
+ * the banner image).
+ */
+let _bannerImage = null;
+let _bannerMissingWarned = false;
+function loadBannerImage() {
+  if (_bannerImage) return _bannerImage;
+  const bannerPath = path.join(__dirname, "..", "media", "banner.png");
+  try {
+    _bannerImage = fs.readFileSync(bannerPath);
+    log.info({ bannerPath, bytes: _bannerImage.length }, "Banner image loaded");
+  } catch (e) {
+    if (!_bannerMissingWarned) {
+      log.warn(
+        { bannerPath, err: e?.message || String(e) },
+        "Banner image not found — notifications will be sent without image header",
+      );
+      _bannerMissingWarned = true;
+    }
+    _bannerImage = null;
+  }
+  return _bannerImage;
+}
 
 /**
  * @param {object} sock  — live Baileys WASocket (Hanz).
@@ -82,9 +121,10 @@ async function dispatchNotification(sock, body) {
           created_at: createdAt,
         });
 
-        const result = await sendCtaUrlButton(sock, targetJid, {
+        const result = await sendCtaUrlButtonWithImage(sock, targetJid, {
           text,
           footer: "Bot Nelsen Studio",
+          imageSource: loadBannerImage(),
           buttons: [{ text: "Buka Dashboard", url: WEBSITE_URL }],
         });
         log.info(
@@ -112,9 +152,10 @@ async function dispatchNotification(sock, body) {
           pdf_url: stringField(record, "pdf_url"),
         });
 
-        const result = await sendCtaUrlButton(sock, targetJid, {
+        const result = await sendCtaUrlButtonWithImage(sock, targetJid, {
           text,
           footer: "Bot Nelsen Studio",
+          imageSource: loadBannerImage(),
           buttons: [
             {
               text: "Lihat Invoice",
@@ -147,6 +188,30 @@ async function dispatchNotification(sock, body) {
         const r = await sendTextFallback(sock, targetJid, text);
         log.info({ type, ok: r.ok }, "deploy_failed sent");
         return { ok: r.ok, type };
+      }
+
+      case "report_user": {
+        // User report (typically a "please unblock me" message from a
+        // user who is currently blocked from the website). Pings the
+        // admin via NOTIFY_TARGET_NUMBER with a button into the admin
+        // reports page.
+        const text = buildReportText({
+          email: stringField(record, "email") ?? "",
+          whatsapp_number: stringField(record, "whatsapp_number") ?? "",
+          message: stringField(record, "message") ?? "",
+          status: stringField(record, "status") ?? "pending",
+        });
+        const result = await sendCtaUrlButtonWithImage(sock, targetJid, {
+          text,
+          footer: "Bot Nelsen Studio",
+          imageSource: loadBannerImage(),
+          buttons: [{ text: "Buka Admin Reports", url: ADMIN_REPORTS_URL }],
+        });
+        log.info(
+          { type, path: result.path, ok: result.ok, err: result.error },
+          "report_user sent",
+        );
+        return { ok: result.ok, type };
       }
 
       default:
@@ -184,6 +249,9 @@ function normalizePayload(body) {
       if (table === "invoices") {
         return { type: "invoice_sent", record: body.record ?? null };
       }
+      if (table === "reports") {
+        return { type: "report_user", record: body.record ?? null };
+      }
       return { type: null, record: null };
     }
 
@@ -197,6 +265,7 @@ function normalizePayload(body) {
     if (
       t === "new_order" ||
       t === "invoice_sent" ||
+      t === "report_user" ||
       t === "deploy_success" ||
       t === "deploy_failed"
     ) {
@@ -214,6 +283,9 @@ function normalizePayload(body) {
     }
     if (table === "invoices") {
       return { type: "invoice_sent", record: body.new ?? null };
+    }
+    if (table === "reports") {
+      return { type: "report_user", record: body.new ?? null };
     }
     return { type: null, record: null };
   }

@@ -89,4 +89,86 @@ async function resolveProductName(productId) {
   return ((data.name ?? "").trim()) || null;
 }
 
-module.exports = { getSupabase, resolveUsername, resolveProductName };
+/**
+ * List active products for the `!product` / `.product` command.
+ *
+ * Returns an array sorted by name with the columns the command needs to
+ * render the catalog card. Inactive products (`is_active = false`) are
+ * filtered out — they're effectively "deleted" from the public catalog
+ * but kept in the DB for order history.
+ *
+ * Returns `[]` on any error so the command can show an empty-state
+ * message instead of crashing.
+ */
+async function listProducts() {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("products")
+    .select("id,name,slug,price,image_url,category")
+    .eq("is_active", true)
+    .order("name", { ascending: true });
+  if (error) {
+    log.warn({ err: error.message }, "listProducts error");
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Read the current website status from the singleton `site_status`
+ * table (`id = 1`). Returns one of: `"operational"` | `"maintenance"`,
+ * or `null` if the row is missing (treated as operational elsewhere).
+ *
+ * The schema is defined in
+ * `supabase/migrations/20260722001000_site_maintenance.sql`. The
+ * service-role key bypasses RLS, so this works regardless of policies.
+ */
+async function getSiteStatus() {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("site_status")
+    .select("status")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error || !data) {
+    log.warn({ err: error?.message }, "getSiteStatus: no row found");
+    return null;
+  }
+  return data.status || null;
+}
+
+/**
+ * Set the website status. Updates the singleton row in `site_status`
+ * (creating it if missing) and returns `{ ok, status }`.
+ *
+ * Accepted `value` strings (canonical): `"operational"`, `"maintenance"`.
+ * Unknown values are rejected — we don't want typos like `"maintanence"`
+ * silently creating a row with garbage data.
+ */
+async function setSiteStatus(value) {
+  const allowed = ["operational", "maintenance"];
+  if (!allowed.includes(value)) {
+    return { ok: false, error: `invalid status: ${value}` };
+  }
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("site_status")
+    .upsert(
+      { id: 1, status: value, updated_at: new Date().toISOString() },
+      { onConflict: "id" },
+    );
+  if (error) {
+    log.warn({ err: error.message }, "setSiteStatus error");
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, status: value };
+}
+
+module.exports = {
+  getSupabase,
+  resolveUsername,
+  resolveProductName,
+  listProducts,
+  getSiteStatus,
+  setSiteStatus,
+};

@@ -61,10 +61,10 @@ function startRealtimeListener(sock) {
 
   const sb = getSupabase();
 
-  // We subscribe to BOTH tables on a single channel — Supabase Realtime
+  // We subscribe to ALL tables on a single channel — Supabase Realtime
   // supports multiple `.on(...)` listeners on the same channel name and
   // shares one WebSocket connection across them, which is what we want
-  // (a single egress socket, not two).
+  // (a single egress socket, not two per table).
   const ch = sb
     .channel("nelsen-bot-notifications")
     .on(
@@ -90,6 +90,26 @@ function startRealtimeListener(sock) {
         const body = {
           eventType: "INSERT",
           table: "invoices",
+          new: payload.new,
+        };
+        void dispatchNotification(getLiveSocket(sock), body);
+      },
+    )
+    .on(
+      // New: user reports. Each INSERT into `public.reports` pings
+      // NOTIFY_TARGET_NUMBER with a button to the admin reports page
+      // — used for "please unblock me" style appeals from blocked
+      // users. RLS keeps SELECT admin-only; the bot subscribes via the
+      // service-role key which bypasses RLS, so INSERT events ARE
+      // delivered even though they're anonymous writes.
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "reports" },
+      (payload) => {
+        const id = payload?.new?.id;
+        log.info({ table: "reports", id }, "Realtime reports INSERT");
+        const body = {
+          eventType: "INSERT",
+          table: "reports",
           new: payload.new,
         };
         void dispatchNotification(getLiveSocket(sock), body);
