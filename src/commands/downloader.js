@@ -1,0 +1,598 @@
+'use strict';
+
+const fs = require('fs');
+const config = require('../config');
+const plugins = require('../utils/PluginLoader');
+const { getDevice } = require('@whiskeysockets/baileys');
+const {
+    MAX_SIZE_MB,
+    getInfo,
+    download,
+    cleanTmp,
+    formatDuration,
+    fileSizeMB,
+} = require('../../lib/ytdlp');
+
+const handler = async (m) => {
+    const { command, isSuperOwner, Hanz, sender, msg, senderNumber, pushname, isOwner } = m;
+    const url = command.fullArgs?.trim();
+    const p = config.prefix;
+    const nomorUser = senderNumber;
+
+    switch (command.name) {
+
+        case 'downloadmenu':
+            const device = getDevice(msg.key.id);
+            const downloadCmds = (plugins.commandsByFile()['downloader'] || [])
+            .filter(cmd => !['downloadmenu'].includes(cmd));
+            const role = isSuperOwner ? 'Super Owner' : (isOwner ? 'Co-Owner' : 'User biasa');
+            let menu = `┌─❖「 𝗜𝗡𝗙𝗢 𝗨𝗦𝗘𝗥 」
+│● 𝘕𝘢𝘮𝘢: ${pushname}
+│● 𝘕𝘰𝘮𝘰𝘳: ${nomorUser}
+│● 𝘚𝘵𝘢𝘵𝘮𝘴: ${role}
+│● 𝘗𝘦𝘳𝘢𝘯𝘨𝘬𝘢𝘵: ${device}
+│
+└┬❖ 
+┌┤𝖧𝖺𝗒 𝗄𝖺𝗄 ${pushname} 👋
+│└────────────┈ ⳹
+│「 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗 𝗠𝗘𝗡𝗨 」       
+│
+${downloadCmds.map(cmd => `│⪩ \`${p}${cmd}\``).join('\n')}
+│
+└────────────┈ ⳹`
+            await m.sendInteractive({
+                text: menu,
+                footer: config.footerTxt,
+                quoted: m.fakeOrder,
+                contextInfo: {
+                    mentionedJid: ["0@s.whatsapp.net"],
+                    forwardingScore: 111,
+                    isForwarded: true
+                },
+                buttons: [
+                    { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Kembali ke Menu', id: 'menu' }) },
+                    { name: 'single_select', buttonParamsJson: JSON.stringify({
+                            title: '『 Simpel Menu 』',
+                            sections: [{
+                                title: '『 Simpel Menu 』',
+                                highlight_label: "",
+                                rows: [{ title: "General Menu", description: "Select to display general menu", id: "generalmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Owner Menu", description: "Select to display owner menu", id: "ownermenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Ffmpeg Menu", description: "Select to display ffmpeg menu", id: "ffmpegmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Downloader Menu", description: "Select to display downloader menu", id: "downloadmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Tools Menu", description: "Select to display tools menu", id: "toolsmenu" }]
+                            }, {
+                                highlight_label: "Khusus Owner Utama",
+                                rows: [{ title: "JadiBot Menu", description: "Select to display jadi bot menu", id: "jadibotmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Fun Menu", description: "Select to display fun menu", id: "funmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Group Menu", description: "Select to display group menu ", id: "groupmenu" }]
+                            }]
+                        })
+                    }]
+            });
+            break;
+
+        case 'ytmp3': {
+            if (!url) return m.reply({ text: '❌ Contoh: `!ytmp3 https://youtu.be/xxx`' });
+
+            await m.react('⏳');
+            let filePath;
+            try {
+                await m.reply({ text: '🔍 Mengambil info lagu...' });
+                const info = await getInfo(url);
+
+                const durSec = info.duration || 0;
+                if (durSec > 15 * 60) {
+                    await m.react('❌');
+                    return m.reply({ text: `❌ Durasi terlalu panjang (${formatDuration(durSec)}). Maksimal 15 menit.` });
+                }
+
+                await m.reply({
+                    text: [
+                        `🎵 *${info.title}*`,
+                        `⏱️ Durasi: ${formatDuration(durSec)}`,
+                        `⬇️ Sedang mendownload audio...`,
+                    ].join('\n')
+                });
+
+                filePath = await download(url, [
+                    '-x',
+                    '--audio-format', 'mp3',
+                    '--audio-quality', '128K',
+                ], 'mp3');
+
+                const sizeMB = fileSizeMB(filePath);
+                if (sizeMB > MAX_SIZE_MB) {
+                    cleanTmp(filePath);
+                    await m.react('❌');
+                    return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB). Coba lagu yang lebih pendek.` });
+                }
+
+                await Hanz.sendMessage(sender, {
+                    audio: fs.readFileSync(filePath),
+                    mimetype: 'audio/mpeg',
+                    fileName: `${info.title}.mp3`,
+                    ptt: false,
+                }, { quoted: msg });
+
+                cleanTmp(filePath);
+                await m.react('✅');
+
+            } catch (err) {
+                cleanTmp(filePath);
+                console.error('[YTMP3 ERROR]', err.message);
+                await m.react('❌');
+                await m.reply({ text: `❌ Gagal download audio.\nError: ${err.message.slice(0, 200)}` });
+            }
+            break;
+        }
+
+        case 'ytmp4': {
+            if (!url) return m.reply({ text: '❌ Contoh: `!ytmp4 https://youtu.be/xxx`' });
+
+            await m.react('⏳');
+            let filePath;
+            try {
+                await m.reply({ text: '🔍 Mengambil info video...' });
+                const info = await getInfo(url);
+
+                const durSec = info.duration || 0;
+                if (durSec > 5 * 60) {
+                    await m.react('❌');
+                    return m.reply({ text: `❌ Durasi terlalu panjang (${formatDuration(durSec)}). Maksimal 5 menit untuk video.` });
+                }
+
+                await m.reply({
+                    text: [
+                        `🎬 *${info.title}*`,
+                        `⏱️ Durasi: ${formatDuration(durSec)}`,
+                        `⬇️ Sedang mendownload video (max 480p)...`,
+                    ].join('\n')
+                });
+
+                filePath = await download(url, [
+                    '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]',
+                    '--merge-output-format', 'mp4',
+                ], 'mp4');
+
+                const sizeMB = fileSizeMB(filePath);
+                if (sizeMB > MAX_SIZE_MB) {
+                    cleanTmp(filePath);
+                    await m.react('❌');
+                    return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB). Coba video lebih pendek.` });
+                }
+
+                await Hanz.sendMessage(sender, {
+                    video: fs.readFileSync(filePath),
+                    mimetype: 'video/mp4',
+                    fileName: `${info.title}.mp4`,
+                    caption: `🎬 *${info.title}*\n⏱️ ${formatDuration(durSec)}`,
+                }, { quoted: msg });
+
+                cleanTmp(filePath);
+                await m.react('✅');
+
+            } catch (err) {
+                cleanTmp(filePath);
+                console.error('[YTMP4 ERROR]', err.message);
+                await m.react('❌');
+                await m.reply({ text: `❌ Gagal download video.\nError: ${err.message.slice(0, 200)}` });
+            }
+            break;
+        }
+
+        case 'tiktok':
+        case 'tt': {
+            if (!url) return m.reply({ text: '❌ Contoh: `!tiktok https://vt.tiktok.com/xxx`' });
+
+            await m.react('⏳');
+            let filePath;
+            try {
+                await m.reply({ text: '⬇️ Mendownload video TikTok...' });
+
+                filePath = await download(url, [
+                    '-f', 'download_addr-0/bestvideo+bestaudio/best',
+                    '--merge-output-format', 'mp4',
+                ], 'mp4');
+
+                const sizeMB = fileSizeMB(filePath);
+                if (sizeMB > MAX_SIZE_MB) {
+                    cleanTmp(filePath);
+                    await m.react('❌');
+                    return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).` });
+                }
+
+                let info;
+                try { info = await getInfo(url); } catch { }
+
+                await Hanz.sendMessage(sender, {
+                    video: fs.readFileSync(filePath),
+                    mimetype: 'video/mp4',
+                    caption: info?.title ? `🎵 ${info.title}` : '✅ TikTok downloaded!',
+                }, { quoted: msg });
+
+                cleanTmp(filePath);
+                await m.react('✅');
+
+            } catch (err) {
+                cleanTmp(filePath);
+                console.error('[TIKTOK ERROR]', err.message);
+                await m.react('❌');
+                await m.reply({ text: `❌ Gagal download TikTok.\nError: ${err.message.slice(0, 200)}` });
+            }
+            break;
+        }
+
+        case 'xdl':
+        case 'twdl':
+        case 'twiter':
+            {
+                if (!url) return m.reply({ text: '❌ Contoh: `!xdl https://x.com/xxx/status/xxx`' });
+
+                await m.react('⏳');
+                let filePath;
+                try {
+                    await m.reply({ text: '⬇️ Mendownload video dari X/Twitter...' });
+
+                    filePath = await download(url, [
+                        '-f', 'best[ext=mp4]/best',
+                        '--merge-output-format', 'mp4',
+                    ], 'mp4');
+
+                    const sizeMB = fileSizeMB(filePath);
+                    if (sizeMB > MAX_SIZE_MB) {
+                        cleanTmp(filePath);
+                        await m.react('❌');
+                        return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).` });
+                    }
+
+                    await Hanz.sendMessage(sender, {
+                        video: fs.readFileSync(filePath),
+                        mimetype: 'video/mp4',
+                        caption: '✅ Downloaded dari X/Twitter!',
+                    }, { quoted: msg });
+
+                    cleanTmp(filePath);
+                    await m.react('✅');
+
+                } catch (err) {
+                    cleanTmp(filePath);
+                    console.error('[XDL ERROR]', err.message);
+                    await m.react('❌');
+                    await m.reply({ text: `❌ Gagal download dari X/Twitter.\nError: ${err.message.slice(0, 200)}` });
+                }
+                break;
+            }
+
+        case 'instagram':
+        case 'igdl':
+            {
+                if (!url) return m.reply({ text: '❌ Contoh: `!igdl https://www.instagram.com/reel/...`' });
+
+                await m.react('⏳');
+                let filePath;
+
+                try {
+                    await m.reply({ text: '⬇️ Mendownload Instagram...' });
+
+                    filePath = await download(url, [
+                        '-f', 'best',
+                        '--merge-output-format', 'mp4',
+                    ], 'mp4');
+
+                    const sizeMB = fileSizeMB(filePath);
+
+                    if (sizeMB > MAX_SIZE_MB) {
+                        cleanTmp(filePath);
+                        await m.react('❌');
+                        return m.reply({
+                            text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).`
+                        });
+                    }
+
+                    let info;
+                    try { info = await getInfo(url); } catch { }
+
+                    await Hanz.sendMessage(sender, {
+                        video: fs.readFileSync(filePath),
+                        mimetype: 'video/mp4',
+                        caption: info?.title || '✅ Instagram Downloaded!'
+                    }, { quoted: msg });
+
+                    cleanTmp(filePath);
+                    await m.react('✅');
+
+                } catch (err) {
+                    cleanTmp(filePath);
+                    console.error('[IGDL ERROR]', err.message);
+
+                    await m.react('❌');
+                    await m.reply({
+                        text: `❌ Gagal download Instagram.\nError: ${err.message.slice(0, 200)}`
+                    });
+                }
+                break;
+            }
+
+        case 'fb':
+        case 'fbdl':
+        case 'facebook':
+            {
+                if (!url) return m.reply({ text: '❌ Contoh: `!fbdl https://facebook.com/...`' });
+
+                await m.react('⏳');
+                let filePath;
+
+                try {
+                    await m.reply({ text: '⬇️ Mendownload Facebook...' });
+
+                    filePath = await download(url, [
+                        '-f', 'best',
+                        '--merge-output-format', 'mp4',
+                    ], 'mp4');
+
+                    const sizeMB = fileSizeMB(filePath);
+
+                    if (sizeMB > MAX_SIZE_MB) {
+                        cleanTmp(filePath);
+                        await m.react('❌');
+                        return m.reply({
+                            text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).`
+                        });
+                    }
+
+                    let info;
+                    try { info = await getInfo(url); } catch { }
+
+                    await Hanz.sendMessage(sender, {
+                        video: fs.readFileSync(filePath),
+                        mimetype: 'video/mp4',
+                        caption: info?.title || '✅ Facebook Downloaded!'
+                    }, { quoted: msg });
+
+                    cleanTmp(filePath);
+                    await m.react('✅');
+
+                } catch (err) {
+                    cleanTmp(filePath);
+                    console.error('[FBDL ERROR]', err.message);
+
+                    await m.react('❌');
+                    await m.reply({
+                        text: `❌ Gagal download Facebook.\nError: ${err.message.slice(0, 200)}`
+                    });
+                }
+                break;
+            }
+
+case 'shorts':
+case 'ytshorts': {
+    if (!url) return m.reply({ text: '❌ Contoh: `!shorts https://youtube.com/shorts/xxx`' });
+
+    await m.react('⏳');
+    let filePath;
+    try {
+        await m.reply({ text: '⬇️ Mendownload Shorts...' });
+
+        filePath = await download(url, [
+            '-f', 'best[ext=mp4][height<=1080]/best[ext=mp4]/best',
+            '--merge-output-format', 'mp4',
+        ], 'mp4');
+
+        const sizeMB = fileSizeMB(filePath);
+        if (sizeMB > MAX_SIZE_MB) {
+            cleanTmp(filePath);
+            await m.react('❌');
+            return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).` });
+        }
+
+        let info;
+        try { info = await getInfo(url); } catch { }
+
+        await Hanz.sendMessage(sender, {
+            video: fs.readFileSync(filePath),
+            mimetype: 'video/mp4',
+            caption: info?.title ? `📱 *${info.title}*` : '✅ Shorts downloaded!',
+        }, { quoted: msg });
+
+        cleanTmp(filePath);
+        await m.react('✅');
+
+    } catch (err) {
+        cleanTmp(filePath);
+        console.error('[SHORTS ERROR]', err.message);
+        await m.react('❌');
+        await m.reply({ text: `❌ Gagal download Shorts.\nError: ${err.message.slice(0, 200)}` });
+    }
+    break;
+}
+case 'gitclone': {
+    if (!url) return m.reply({ text: '❌ Contoh: `!gitclone https://github.com/user/repo`' });
+
+    const repoMatch = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+    if (!repoMatch) return m.reply({ text: '❌ Link GitHub tidak valid!' });
+
+    await m.react('⏳');
+    try {
+        const [, user, repo] = repoMatch;
+        const repoName = repo.replace(/\.git$/, '');
+        const zipUrl = `https://github.com/${user}/${repoName}/archive/refs/heads/main.zip`;
+
+        await m.reply({ text: `⬇️ Mendownload repository *${repoName}*...` });
+
+        const { execSync } = require('child_process');
+        const tmpFile = path.join(require('os').tmpdir(), `${repoName}.zip`);
+
+        execSync(`curl -L -o "${tmpFile}" "${zipUrl}"`, { timeout: 60000 });
+
+        const stats = fs.statSync(tmpFile);
+        const sizeMB = stats.size / 1024 / 1024;
+
+        if (sizeMB > MAX_SIZE_MB) {
+            fs.unlinkSync(tmpFile);
+            await m.react('❌');
+            return m.reply({ text: `❌ Repo terlalu besar (${sizeMB.toFixed(1)} MB).` });
+        }
+
+        await Hanz.sendMessage(sender, {
+            document: fs.readFileSync(tmpFile),
+            mimetype: 'application/zip',
+            fileName: `${repoName}.zip`,
+            caption: `📦 *${repoName}*\n💾 ${sizeMB.toFixed(2)} MB`,
+        }, { quoted: msg });
+
+        fs.unlinkSync(tmpFile);
+        await m.react('✅');
+
+    } catch (err) {
+        console.error('[GITCLONE ERROR]', err.message);
+        await m.react('❌');
+        await m.reply({ text: `❌ Gagal clone repo.\nError: ${err.message.slice(0, 200)}` });
+    }
+    break;
+}
+case 'mediafire': {
+    if (!url) return m.reply({ text: '❌ Contoh: `!mediafire https://mediafire.com/...`' });
+
+    await m.react('⏳');
+    let filePath;
+    try {
+        await m.reply({ text: '⬇️ Mendownload dari MediaFire...' });
+
+        filePath = await download(url, [], 'bin');
+
+        const sizeMB = fileSizeMB(filePath);
+        if (sizeMB > MAX_SIZE_MB) {
+            cleanTmp(filePath);
+            await m.react('❌');
+            return m.reply({ text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).` });
+        }
+
+        const fileName = path.basename(filePath);
+        await Hanz.sendMessage(sender, {
+            document: fs.readFileSync(filePath),
+            mimetype: 'application/octet-stream',
+            fileName: fileName,
+            caption: `📁 *${fileName}*\n💾 ${sizeMB.toFixed(2)} MB`,
+        }, { quoted: msg });
+
+        cleanTmp(filePath);
+        await m.react('✅');
+
+    } catch (err) {
+        cleanTmp(filePath);
+        console.error('[MEDIAFIRE ERROR]', err.message);
+        await m.react('❌');
+        await m.reply({ text: `❌ Gagal download MediaFire.\nError: ${err.message.slice(0, 200)}` });
+    }
+    break;
+}
+case 'soundcloud':
+case 'scloud': {
+    if (!url) return m.reply({ text: '❌ Contoh: `!scloud https://soundcloud.com/...`' });
+
+    await m.react('⏳');
+    let filePath;
+    try {
+        await m.reply({ text: '⬇️ Mendownload dari SoundCloud...' });
+
+        filePath = await download(url, [
+            '-x',
+            '--audio-format', 'mp3',
+            '--audio-quality', '128K',
+        ], 'mp3');
+
+        const sizeMB = fileSizeMB(filePath);
+        if (sizeMB > MAX_SIZE_MB) {
+            cleanTmp(filePath);
+            await m.react('❌');
+            return m.reply({ text: `❌ File terlalu besar.` });
+        }
+
+        let info;
+        try { info = await getInfo(url); } catch { }
+
+        await Hanz.sendMessage(sender, {
+            audio: fs.readFileSync(filePath),
+            mimetype: 'audio/mpeg',
+            fileName: info?.title ? `${info.title}.mp3` : 'soundcloud.mp3',
+            ptt: false,
+        }, { quoted: msg });
+
+        cleanTmp(filePath);
+        await m.react('✅');
+
+    } catch (err) {
+        cleanTmp(filePath);
+        console.error('[SOUNDCLOUD ERROR]', err.message);
+        await m.react('❌');
+        await m.reply({ text: `❌ Gagal download SoundCloud.\nError: ${err.message.slice(0, 200)}` });
+    }
+    break;
+}
+        case 'pinterest':
+        case 'pindl':
+        case 'pin': {
+            if (!url) return m.reply({ text: '❌ Contoh: `!pindl https://pin.it/...`' });
+
+            await m.react('⏳');
+            let filePath;
+
+            try {
+                await m.reply({ text: '⬇️ Mendownload Pinterest...' });
+
+                filePath = await download(url, [
+                    '-f', 'best',
+                    '--merge-output-format', 'mp4',
+                ], 'mp4');
+
+                const sizeMB = fileSizeMB(filePath);
+
+                if (sizeMB > MAX_SIZE_MB) {
+                    cleanTmp(filePath);
+                    await m.react('❌');
+                    return m.reply({
+                        text: `❌ File terlalu besar (${sizeMB.toFixed(1)} MB).`
+                    });
+                }
+
+                let info;
+                try { info = await getInfo(url); } catch { }
+
+                await Hanz.sendMessage(sender, {
+                    video: fs.readFileSync(filePath),
+                    mimetype: 'video/mp4',
+                    caption: info?.title || '✅ Pinterest Downloaded!'
+                }, { quoted: msg });
+
+                cleanTmp(filePath);
+                await m.react('✅');
+
+            } catch (err) {
+                cleanTmp(filePath);
+                console.error('[PINDL ERROR]', err.message);
+
+                await m.react('❌');
+                await m.reply({
+                    text: `❌ Gagal download Pinterest.\nError: ${err.message.slice(0, 200)}`
+                });
+            }
+            break;
+        }
+        
+    }
+};
+
+module.exports = handler;

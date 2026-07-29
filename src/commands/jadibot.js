@@ -1,0 +1,205 @@
+const config = require('../config');
+const plugins = require('../utils/PluginLoader');
+const { sendInteractiveMessage } = require('../utils/interactiveHelper');
+const { getDevice } = require('@whiskeysockets/baileys');
+
+const handler = async (m) => {
+
+    const { command, isSuperOwner, isMain, Hanz, sender, msg, senderNumber, pushname, isOwner } = m;
+    const p = config.prefix;
+    const nomorUser = senderNumber;
+    if (!isOwner) return m.reply({ text: '❌ Perintah ini khusus untuk Owner Bot!' });
+
+    if (!isMain) {
+        return m.reply({ text: '❌ Fitur ini hanya bisa digunakan melalui *Bot Utama*, bukan dari clone bot!' });
+    }
+
+    switch (command.name) {
+        case 'jadibotmenu':
+            const device = getDevice(msg.key.id);
+            const jadibotCmds = (plugins.commandsByFile()['jadibot'] || [])
+            .filter(cmd => !['jadibotmenu'].includes(cmd));
+            const role = isSuperOwner ? 'Super Owner' : (isOwner ? 'Co-Owner' : 'User biasa');
+            let menu = `┌─❖「 𝗜𝗡𝗙𝗢 𝗨𝗦𝗘𝗥 」
+│● 𝘕𝘢𝘮𝘢: ${pushname}
+│● 𝘕𝘰𝘮𝘰𝘳: ${nomorUser}
+│● 𝘚𝘵𝘢𝘵𝘶𝘴: ${role}
+│● 𝘗𝘦𝘳𝘢𝘯𝘨𝘬𝘢𝘵: ${device}
+│
+└┬❖ 
+┌┤𝖧𝖺𝗒 𝗄𝖺𝗄 ${pushname} 👋
+│└────────────┈ ⳹
+│「 𝗝𝗔𝗗𝗜𝗕𝗢𝗧 𝗠𝗘𝗡𝗨 」
+│
+${jadibotCmds.map(cmd => `│⪩ \`${p}${cmd}\``).join('\n')}
+│
+└────────────┈ ⳹`
+            await m.sendInteractive({
+                text: menu,
+                footer: config.footerTxt,
+                quoted: m.fakeOrder,
+                contextInfo: {
+                    mentionedJid: ["0@s.whatsapp.net"],
+                    forwardingScore: 111,
+                    isForwarded: true
+                },
+                buttons: [
+                    { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Kembali ke Menu', id: 'menu' }) },
+                    { name: 'single_select', buttonParamsJson: JSON.stringify({
+                            title: '『 Simpel Menu 』',
+                            sections: [{
+                                title: '『 Simpel Menu 』',
+                                highlight_label: "",
+                                rows: [{ title: "General Menu", description: "Select to display general menu", id: "generalmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Owner Menu", description: "Select to display owner menu", id: "ownermenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Ffmpeg Menu", description: "Select to display ffmpeg menu", id: "ffmpegmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Downloader Menu", description: "Select to display downloader menu", id: "downloadmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Tools Menu", description: "Select to display tools menu", id: "toolsmenu" }]
+                            }, {
+                                highlight_label: "Khusus Owner Utama",
+                                rows: [{ title: "JadiBot Menu", description: "Select to display jadi bot menu", id: "jadibotmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Fun Menu", description: "Select to display fun menu", id: "funmenu" }]
+                            }, {
+                                highlight_label: "",
+                                rows: [{ title: "Group Menu", description: "Select to display group menu ", id: "groupmenu" }]
+                            }]
+                        })
+                    }]
+            });
+            break;
+        case 'addbot':
+        case 'jadibot': {
+            if (!isSuperOwner) return m.reply({ text: '❌ Perintah ini hanya untuk Super Owner!' });
+            let nomorTarget = command.fullArgs.replace(/\D/g, '');
+
+            if (!nomorTarget) {
+                return m.reply({ text: `⚠️ *Format Salah!*\n\nFormat: \`${config.prefix}jadibot <nomor-hp>\`\nContoh: \`${config.prefix}jadibot 6212345xxxxx\`` });
+            }
+
+            if (nomorTarget.startsWith('0')) {
+                nomorTarget = '62' + nomorTarget.slice(1);
+            }
+
+            await m.reply({ text: `🔍 Memeriksa nomor +${nomorTarget} di WhatsApp...` });
+
+            try {
+                const [checkResult] = await Hanz.onWhatsApp(`${nomorTarget}@s.whatsapp.net`);
+                if (!checkResult?.exists) {
+                    return m.reply({ text: `❌ *Nomor +${nomorTarget} tidak terdaftar di WhatsApp!*\n\nPastikan nomor sudah benar dan aktif di WhatsApp.` });
+                }
+            } catch (err) {
+                return m.reply({ text: `❌ Gagal memeriksa nomor: ${err.message}` });
+            }
+
+            await m.reply({ text: `⏳ Sedang menginisialisasi sesi baru dan meminta Pairing Code untuk +${nomorTarget}...` });
+
+            try {
+                const pairingCode = await global.createNewBotInstance(nomorTarget);
+
+                const ownerJid = sender;
+                const targetJid = `${nomorTarget}@s.whatsapp.net`;
+
+                try {
+                    await sendInteractiveMessage(Hanz, targetJid, {
+                        text:
+                            `🤖 *Halo! Kamu sedang didaftarkan sebagai Clone Bot.*\n\n` +
+                            `• *Pairing Code* : *${pairingCode}*\n\n` +
+                            `👉 Buka WhatsApp kamu → *Linked Devices* → *Link with phone number*\n` +
+                            `Lalu masukkan kode di atas.\n\n` +
+                            `⚠️ Kode ini hanya berlaku beberapa menit!`,
+                        footer: config.footerTxt,
+                        buttons: [
+                            {
+                                name: 'cta_copy',
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: '📋 Copy Kode Pairing',
+                                    copy_code: pairingCode
+                                })
+                            }
+                        ]
+                    });
+                } catch (sendErr) {
+                    console.error('[JADIBOT] Gagal kirim pesan ke nomor target:', sendErr.message);
+                }
+
+                await m.sendInteractive({
+                    text:
+                        `✅ *BERHASIL GENERATE CLONE BOT*\n\n` +
+                        `• *Nomor Bot* : +${nomorTarget}\n` +
+                        `• *Pairing Code* : *${pairingCode}*\n\n` +
+                        `📨 Pairing code sudah dikirim langsung ke nomor *+${nomorTarget}*.\n\n` +
+                        `👉 Atau klik tombol di bawah untuk menyalin kode, lalu masukkan pada menu *Linked Devices → Link with phone number*.`,
+                    footer: config.footerTxt,
+                    quoted: m.msg,
+                    buttons: [
+                        {
+                            name: 'cta_copy',
+                            buttonParamsJson: JSON.stringify({
+                                display_text: '📋 Copy Kode Pairing',
+                                copy_code: pairingCode
+                            })
+                        }
+                    ]
+                });
+
+            } catch (error) {
+                console.error('Gagal kloning bot:', error);
+                await m.reply({ text: `❌ Gagal membuat clone bot: ${error.message}` });
+            }
+            break;
+        }
+
+        case 'listbot': {
+            if (!isSuperOwner) return m.reply({ text: '❌ Perintah ini hanya untuk Super Owner!' });
+            const activeBots = Object.keys(global.conns || {});
+
+            if (activeBots.length <= 1) {
+                return m.reply({ text: `ℹ️ Belum ada clone bot (*jadibot*) yang aktif saat ini.` });
+            }
+
+            let teksList = `🤖 *DAFTAR CLONE BOT AKTIF* 🤖\n\n`;
+            let urutan = 1;
+
+            activeBots.forEach(botFile => {
+                if (botFile !== config.authFolder.replace(/\D/g, '')) {
+                    teksList += `${urutan++}. *Nomor*: +${botFile}\n`;
+                }
+            });
+
+            await m.reply({ text: teksList });
+            break;
+        }
+
+        case 'stopbot': {
+            if (!isSuperOwner) return m.reply({ text: '❌ Perintah ini hanya untuk Super Owner!' });
+            let targetStop = command.fullArgs.replace(/\D/g, '');
+            if (!targetStop) return m.reply({ text: `⚠️ Masukkan nomor bot sewaan yang ingin dimatikan.\nContoh: \`${config.prefix}stopbot 6212345xxxxx\`` });
+
+            if (global.conns[targetStop]) {
+                try {
+                    global.conns[targetStop].logout();
+                    delete global.conns[targetStop];
+
+                    await m.reply({ text: `✅ Sesi Clone Bot *+${targetStop}* berhasil dimatikan.` });
+                } catch (e) {
+                    await m.reply({ text: `❌ Terjadi kesalahan saat mematikan bot: ${e.message}` });
+                }
+            } else {
+                await m.reply({ text: `❌ Nomor *+${targetStop}* tidak ditemukan di dalam daftar bot aktif.` });
+            }
+            break;
+        }
+    }
+};
+
+module.exports = handler;
