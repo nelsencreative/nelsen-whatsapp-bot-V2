@@ -211,6 +211,25 @@ async function sendCtaUrlButton(Hanz, jid, content) {
     const { text, footer = '', buttons = [] } = content;
     const firstBtn = buttons[0] || { text: 'Buka', url: 'https://nelsen.web.id' };
 
+    // Pre-flight: if the socket itself is missing/broken, every send will
+    // throw with "Cannot read properties of undefined (reading 'relayMessage')"
+    // or similar. Fail fast with a clear message so the dispatcher's log
+    // shows the real cause instead of "ok:false, path:text-fallback".
+    if (!Hanz || typeof Hanz.relayMessage !== 'function') {
+        return {
+            ok: false,
+            path: 'no-socket',
+            error: `Hanz socket invalid: ${typeof Hanz} (relayMessage=${typeof Hanz?.relayMessage})`,
+        };
+    }
+    if (!jid || typeof jid !== 'string' || !jid.includes('@')) {
+        return {
+            ok: false,
+            path: 'no-jid',
+            error: `Invalid jid: ${JSON.stringify(jid)}`,
+        };
+    }
+
     // Shape the button exactly like `!sc` does — the proven-working
     // pattern. Do NOT add `merchant_url` or extra fields; the WA server
     // rejects malformed buttonParamsJson.
@@ -235,17 +254,19 @@ async function sendCtaUrlButton(Hanz, jid, content) {
         });
         return { ok: true, path: 'cta_url' };
     } catch (err) {
-        // Only as a last resort — plain text. The text body always
-        // contains the raw URL so the recipient can still tap through
-        // (WhatsApp auto-links bare URLs).
+        // CTA path failed — try plain text. Capture BOTH errors so the
+        // dispatcher's log shows the full picture (not just the second
+        // one which often hides the real cause).
+        const ctaErr = err?.message || String(err);
         try {
             await Hanz.sendMessage(jid, { text });
-            return { ok: true, path: 'text-fallback', error: err?.message || String(err) };
+            return { ok: true, path: 'text-fallback', error: ctaErr };
         } catch (err2) {
+            const textErr = err2?.message || String(err2);
             return {
                 ok: false,
                 path: 'text-fallback',
-                error: `cta_url=${err?.message || String(err)}; text=${err2?.message || String(err2)}`,
+                error: `cta_url=[${ctaErr}]; text=[${textErr}]`,
             };
         }
     }

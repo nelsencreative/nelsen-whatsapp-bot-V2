@@ -42,6 +42,16 @@ let channel = null;
  * invokes this on every reconnect but only the first call subscribes.
  *
  * @param {WASocket} sock  — live Baileys socket to dispatch messages to.
+ *   IMPORTANT: do NOT capture `sock` in the INSERT handler closure. On
+ *   reconnect (515/408), `startBot()` builds a fresh WASocket and stores
+ *   it in `global.conns[instanceKey]`, but this listener is skipped (the
+ *   guard `if (channel)` short-circuits). A closure that captured the
+ *   first `sock` would keep dispatching to a closed socket — `relayMessage`
+ *   and `sendMessage` would both throw, and every notification would fail
+ *   silently (log shows `path:"text-fallback", ok:false`).
+ *
+ *   We instead look up the live socket from `global.conns` at call time,
+ *   so the dispatcher always sees the currently-connected WASocket.
  */
 function startRealtimeListener(sock) {
   if (channel) {
@@ -68,7 +78,7 @@ function startRealtimeListener(sock) {
           table: "orders",
           new: payload.new,
         };
-        void dispatchNotification(sock, body);
+        void dispatchNotification(getLiveSocket(sock), body);
       },
     )
     .on(
@@ -82,7 +92,7 @@ function startRealtimeListener(sock) {
           table: "invoices",
           new: payload.new,
         };
-        void dispatchNotification(sock, body);
+        void dispatchNotification(getLiveSocket(sock), body);
       },
     );
 
@@ -111,6 +121,30 @@ function startRealtimeListener(sock) {
   });
 
   channel = ch;
+}
+
+/**
+ * Resolve the currently-connected WASocket.
+ *
+ * Tries (in order):
+ *   1. `global.conns[mainInstance]` — the main bot's live socket. On
+ *      reconnect this is the freshly-built `Hanz`; on first connect
+ *      it's the same instance the caller passed in.
+ *   2. The fallback `sock` parameter — used when `global.conns` is
+ *      somehow empty (e.g. startup race during testing) or when the
+ *      socket lives outside the global registry.
+ *
+ * Returns the socket or `null` if both lookups fail. The dispatcher
+ * already handles `null` gracefully (returns `ok:false, path:"no-socket"`).
+ */
+function getLiveSocket(fallback) {
+  try {
+    const live = global?.conns?.["session"];
+    if (live && typeof live.relayMessage === "function") return live;
+  } catch (e) {
+    // ignore — fall through to fallback
+  }
+  return fallback || null;
 }
 
 /**

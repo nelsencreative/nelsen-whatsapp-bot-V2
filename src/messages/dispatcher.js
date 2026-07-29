@@ -88,7 +88,7 @@ async function dispatchNotification(sock, body) {
           buttons: [{ text: "Buka Dashboard", url: WEBSITE_URL }],
         });
         log.info(
-          { type, path: result.path, ok: result.ok },
+          { type, path: result.path, ok: result.ok, err: result.error },
           "new_order sent",
         );
         return { ok: result.ok, type };
@@ -123,7 +123,7 @@ async function dispatchNotification(sock, body) {
           ],
         });
         log.info(
-          { type, path: result.path, ok: result.ok },
+          { type, path: result.path, ok: result.ok, err: result.error },
           "invoice_sent sent",
         );
         return { ok: result.ok, type };

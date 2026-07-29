@@ -73,7 +73,12 @@ function buildApp(sock) {
     bearerAuth,
     async (req, res) => {
       const body = req.body ?? {};
-      const result = await dispatchNotification(sock, body);
+      // Resolve the live socket per-request — `sock` captured at
+      // buildApp() time is stale after a reconnect (startBot rebuilds
+      // Hanz and overwrites global.conns[instanceKey]). Falling back
+      // to `global.conns.session` ensures /notify always dispatches to
+      // the currently-connected WASocket.
+      const result = await dispatchNotification(resolveLiveSocket(sock), body);
       res.status(result.ok ? 200 : 502).json({
         ok: result.ok,
         type: result.type,
@@ -83,6 +88,29 @@ function buildApp(sock) {
   );
 
   return app;
+}
+
+/**
+ * Resolve the currently-connected WASocket.
+ *
+ * Tries (in order):
+ *   1. `global.conns.session` — the main bot's live socket (set by
+ *      `index.js` line ~131 on every startBot call).
+ *   2. The fallback `sock` parameter — used at startup before
+ *      `global.conns.session` is populated, or when the socket lives
+ *      outside the global registry (tests).
+ *
+ * Returns the socket or `null` if both lookups fail. The dispatcher
+ * already handles `null` gracefully (returns `ok:false, path:"no-socket"`).
+ */
+function resolveLiveSocket(fallback) {
+  try {
+    const live = global?.conns?.session;
+    if (live && typeof live.relayMessage === "function") return live;
+  } catch (e) {
+    // ignore — fall through to fallback
+  }
+  return fallback || null;
 }
 
 /**
