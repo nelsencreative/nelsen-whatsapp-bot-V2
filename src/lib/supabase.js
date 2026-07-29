@@ -253,13 +253,27 @@ async function createNotification({ recipientId, type, title, body }) {
  *   pushes via Firebase Admin SDK. Skipping that roundtrip means
  *   the push never reaches the device.
  *
- * Returns `{ ok, messageId? }` on success, `{ ok: false, error }` on
- * failure.
+ * Two modes:
+ *   - SINGLE:  `userId` provided  → push to that one user.
+ *   - BROADCAST: `broadcast: true` → push to every user with a
+ *               registered fcm_token. `userId` is ignored. The Edge
+ *               Function returns per-batch counts
+ *               (`{ total, sent, failed, messageIds[] }`); we surface
+ *               those on the return value so the caller can show a
+ *               meaningful admin response.
+ *
+ * Returns:
+ *   - Single: `{ ok, messageId? }` or `{ ok: false, error }`.
+ *   - Broadcast: `{ ok, mode: 'broadcast', total, sent, failed,
+ *                   messageIds, error? }`.
  */
-async function triggerFcmPush({ userId, title, body, data }) {
-  if (!userId) return { ok: false, error: "userId is required" };
+async function triggerFcmPush({ userId, title, body, data, broadcast }) {
   if (!title || !body) {
     return { ok: false, error: "title and body are required" };
+  }
+  // Single-mode requires userId; broadcast doesn't.
+  if (!broadcast && !userId) {
+    return { ok: false, error: "userId is required (or pass broadcast: true)" };
   }
 
   const env = loadEnv();
@@ -278,7 +292,7 @@ async function triggerFcmPush({ userId, title, body, data }) {
         apikey: env.supabaseServiceRoleKey,
       },
       body: JSON.stringify({
-        user_id: userId,
+        ...(broadcast ? { broadcast: true } : { user_id: userId }),
         title: String(title),
         body: String(body),
         ...(data && typeof data === "object" ? { data } : {}),
@@ -300,6 +314,22 @@ async function triggerFcmPush({ userId, title, body, data }) {
         error: parsed?.error || `Edge function returned status ${res.status}`,
       };
     }
+
+    if (broadcast || parsed?.mode === "broadcast") {
+      // Broadcast path: Edge Function may return HTTP 207 if some
+      // targets failed (per FCM sendEachForMulticast semantics). We
+      // still surface the data — caller decides what counts as success.
+      return {
+        ok: parsed?.failed === 0,
+        mode: "broadcast",
+        total: parsed?.total ?? 0,
+        sent: parsed?.sent ?? 0,
+        failed: parsed?.failed ?? 0,
+        messageIds: parsed?.messageIds ?? [],
+        error: parsed?.failed ? `${parsed.failed} target(s) failed` : undefined,
+      };
+    }
+
     return { ok: true, messageId: parsed?.messageId };
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };

@@ -32,12 +32,8 @@ const {
     listProducts,
     getSiteStatus,
     setSiteStatus,
-    resolveProfileByPhone,
-    createNotification,
     triggerFcmPush,
 } = require('../lib/supabase');
-const { phoneToJid } = require('../lib/formatter');
-const { loadEnv } = require('../lib/env');
 const { getLogger } = require('../lib/logger');
 
 const log = getLogger().child({ mod: 'commands.nelsen' });
@@ -297,21 +293,39 @@ const handler = async (m) => {
 
         // ────────────────────────────────────────────────────────────
         case 'notif': {
-            // Admin broadcast. Two surfaces:
+            // Admin broadcast — fans out a single notification to
+            // EVERY user that has a registered `fcm_token` in
+            // `user_profiles`. Mirrors how a marketing push works:
+            // one author, many recipients, all through the same
+            // Edge Function the Next.js inbox uses.
             //
-            //   1. WhatsApp: send to NOTIFY_TARGET_NUMBER so the admin
-            //      has a copy in their personal chat (handy for
-            //      forwarding).
-            //   2. Push notification: INSERT into `public.notifications`
-            //      keyed on the super-owner's profile id. The Nelsen
-            //      dashboard's Edge Function picks up that INSERT and
-            //      pushes an FCM message to the user's mobile app —
-            //      this is what makes the notif actually "appear in
-            //      the application".
+            // Earlier revisions of this command also sent a copy to
+            // the admin's own WhatsApp (`NOTIFY_TARGET_NUMBER`) and
+            // looked up the admin's profile by phone. Both of those
+            // were removed because:
+            //
+            //   - The WA send was redundant — the admin typed the
+            //     command, they already see it on their phone.
+            //   - The profile lookup required
+            //     `config.superOwner`'s `whatsapp_number` to match a
+            //     row in `profiles`. When it didn't match (the most
+            //     common case — the super-owner is identified by
+            //     their bot account, not their web app account), the
+            //     push silently dropped with "Profile ... tidak
+            //     ditemukan". The bug report was: "saya ingin
+            //     notifikasi muncul pada semua user (bukan hanya
+            //     user yang setting nomor)".
             //
             // Format: `{prefix}notif {judul}|{isi}`
             //
-            // Example: `!notif Special Promo|Yuk order sekarang!`
+            // Example: `!notif PROMO SPECIAL|Yuk order sekarang!`
+            //
+            // The Edge Function `send-notification` is called with
+            // `broadcast: true` — see
+            // `supabase/functions/send-notification/index.ts`. It
+            // returns `{ total, sent, failed }` which we surface in
+            // the response so the admin knows how many devices were
+            // actually reached.
             if (!isSuperOwner) {
                 return m.reply({ text: '❌ Khusus Super Owner!' });
             }
@@ -322,9 +336,8 @@ const handler = async (m) => {
                         `📌 Format: \`${p}notif {judul}|{isi}\`\n\n` +
                         `Contoh:\n` +
                         `\`${p}notif Special Promo|Yuk order sekarang di Nelsen Studio!\`\n\n` +
-                        `Notifikasi akan dikirim ke:\n` +
-                        `• WhatsApp pribadi (${config.superOwner})\n` +
-                        `• Push notification ke aplikasi mobile`,
+                        `Notifikasi akan dikirim ke SEMUA user yang punya aplikasi mobile ` +
+                        `dengan fcm_token aktif (tidak berdasarkan nomor WhatsApp).`,
                 });
             }
 
@@ -353,108 +366,79 @@ const handler = async (m) => {
                 });
             }
 
-            const env = loadEnv();
-            const targetJid = phoneToJid(env.notifyTargetNumber);
-
-            // ---- (1) WhatsApp — text-only is the right call here:
-            // personal-chat notifications don't need a CTA button, and
-            // the dashboard app's push will carry the actual deep link.
-            const waBody = [
-                `📢 *${judul}*`,
-                '',
-                isi,
-                '',
-                '> Bot Nelsen Studio',
-            ].join('\n');
-
-            let waOk = false;
-            let waError = null;
-            try {
-                await Hanz.sendMessage(targetJid, { text: waBody });
-                waOk = true;
-            } catch (err) {
-                waError = err?.message || String(err);
-                log.warn({ err: waError }, '!notif WA send failed');
-            }
-
-            // ---- (2) Push notification — same path the Next.js
-            // inbox uses: HTTP POST to the `send-notification` Edge
-            // Function, which reads `user_profiles.fcm_token` and
-            // pushes via Firebase Admin SDK. This is the ONLY path
-            // that actually delivers a real OS-level push to the
-            // user's mobile app.
+            // ---- Broadcast to all users with fcm_token ----
             //
-            // We also INSERT into `public.notifications` afterwards
-            // so the bell badge updates via the
-            // `useRealtimeNotifications` hook — same pattern as the
-            // inbox flow (one HTTP push + one inbox row).
-            const recipient = await resolveProfileByPhone(config.superOwner);
-            let pushResult = null;
-            let inboxResult = null;
+            // The Edge Function `send-notification` handles the
+            // fan-out via `sendEachForMulticast`. One HTTP roundtrip
+            // from us; Firebase batches the individual sends server-
+            // side. We just surface the result counts.
+            const pushResult = await triggerFcmPush({
+                broadcast: true,
+                title: judul,
+                body: isi,
+                data: { type: 'broadcast', source: 'whatsapp-bot' },
+            });
 
-            if (!recipient) {
-                const errMsg =
-                    `Profile untuk nomor ${config.superOwner} tidak ditemukan di tabel profiles. ` +
-                    'Pastikan profile admin punya whatsapp_number yang sama dengan config.superOwner.';
-                log.warn({ phone: config.superOwner }, '!notif: super-owner profile not found; skipping push');
-                pushResult = { ok: false, error: errMsg };
-            } else {
-                // (2a) FCM push — Edge Function.
-                pushResult = await triggerFcmPush({
-                    userId: recipient.id,
-                    title: judul,
-                    body: isi,
-                    data: { type: 'broadcast', source: 'whatsapp-bot' },
-                });
-                if (!pushResult.ok) {
-                    log.warn(
-                        { err: pushResult.error, userId: recipient.id },
-                        '!notif FCM push failed',
-                    );
-                }
-
-                // (2b) Inbox row — for the bell badge Realtime feed.
-                // Only attempt if FCM didn't error out with a fatal
-                // user-missing condition; otherwise the inbox row
-                // would just be noise.
-                if (pushResult.ok) {
-                    inboxResult = await createNotification({
-                        recipientId: recipient.id,
-                        type: 'broadcast',
-                        title: judul,
-                        body: isi,
-                    });
-                    if (!inboxResult.ok) {
-                        log.warn(
-                            { err: inboxResult.error },
-                            '!notif inbox insert failed (push already sent)',
-                        );
-                    }
-                }
-            }
-
-            // Compose the response — be explicit so the admin knows
-            // whether the push actually reached the device.
-            const lines = [];
-            if (waOk) lines.push('✅ WhatsApp: terkirim.');
-            else lines.push(`❌ WhatsApp: gagal (${waError || 'unknown'}).`);
-
-            if (pushResult?.ok) {
-                lines.push(
-                    `✅ Push FCM: terkirim ke aplikasi mobile` +
-                    (pushResult.messageId ? ` (messageId=${pushResult.messageId})` : '') +
-                    '.',
+            if (!pushResult.ok) {
+                // `error` covers both: HTTP-level failure (network,
+                // auth, missing secrets) and "every target failed"
+                // (failed === total). Either way the admin needs to
+                // know the broadcast did NOT reach anyone.
+                log.warn(
+                    { err: pushResult.error, total: pushResult.total },
+                    '!notif broadcast failed',
                 );
-                if (inboxResult?.ok) {
-                    lines.push(`✅ Inbox: tersimpan (id=${inboxResult.id}).`);
-                } else if (inboxResult) {
-                    lines.push(`⚠️ Inbox: ${inboxResult.error}`);
-                }
-            } else if (pushResult) {
-                lines.push(`❌ Push FCM: ${pushResult.error}`);
+                return m.reply({
+                    text:
+                        `❌ Push FCM broadcast gagal.\n` +
+                        `Pesan error: ${pushResult.error || 'unknown'}\n\n` +
+                        `Cek:\n` +
+                        `• Apakah Edge Function \`send-notification\` sudah di-deploy?\n` +
+                        `• Apakah \`FIREBASE_SERVICE_ACCOUNT_JSON\` sudah di-set?`,
+                });
             }
 
-            return m.reply({ text: lines.join('\n') });
+            // ---- Compose the admin-facing response ----
+            //
+            // User asked for: ganti "✅ WhatsApp: terkirim" menjadi
+            // "✅Status: Terkirim ke semua user". We show a single
+            // status line plus a breakdown so the admin can see at a
+            // glance whether the fan-out was clean.
+            const total = pushResult.total ?? 0;
+            const sent = pushResult.sent ?? 0;
+            const failed = pushResult.failed ?? 0;
+
+            if (total === 0) {
+                return m.reply({
+                    text:
+                        `⚠️Status: Tidak ada user dengan fcm_token aktif.\n` +
+                        `Belum ada aplikasi mobile yang mendaftarkan push token.`,
+                });
+            }
+
+            if (failed === 0) {
+                return m.reply({
+                    text:
+                        `✅Status: Terkirim ke semua user\n` +
+                        `• Total target: ${total}\n` +
+                        `• Berhasil: ${sent}\n` +
+                        `• Gagal: 0`,
+                });
+            }
+
+            // Partial success — some tokens may be stale (user uninstalled
+            // the app, cleared app data, etc.). Surface this rather than
+            // hide it: silent partial failures are the worst kind.
+            return m.reply({
+                text:
+                    `⚠️Status: Terkirim sebagian\n` +
+                    `• Total target: ${total}\n` +
+                    `• Berhasil: ${sent}\n` +
+                    `• Gagal: ${failed}\n\n` +
+                    `Token yang gagal biasanya karena user sudah uninstall aplikasi ` +
+                    `atau app data dibersihkan. Token失效 akan di-bersihkan otomatis ` +
+                    `oleh Edge Function pada push berikutnya.`,
+            });
         }
     }
 };
