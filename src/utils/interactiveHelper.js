@@ -186,58 +186,99 @@ async function sendInteractiveWithImage(Hanz, jid, content) {
  * Used by the notification dispatcher to attach a "Buka Dashboard" /
  * "Lihat Invoice" CTA to order + invoice messages.
  *
- * On Baileys' `nativeFlowMessage` reliability:
- *   - The `cta_url` button type is the modern way to attach a link
- *     button. `buttonParamsJson` is JSON-stringified with `display_text`
- *     and `url`. We also include `merchant_url` because some Baileys
- *     versions require both fields to render the button correctly.
- *   - The TEXT body ALWAYS contains the raw URL too — WhatsApp auto-
- *     links bare URLs, so the recipient can ALWAYS tap the link even
- *     if the native button fails to render.
- *   - This function returns a structured result so the caller can log
- *     which path succeeded.
+ * Why we DON'T use sendButtons() / sendInteractiveMessage() (the
+ * viewOnceMessage + biz_bot path used by basebot's other helpers):
+ *   - sendInteractiveMessage wraps the message in a `viewOnceMessage`
+ *     stanza, which makes WhatsApp render it as a "view-once" message
+ *     — the chat shows it but the notification banner often gets
+ *     suppressed, and on some Android versions the message disappears
+ *     from the chat list entirely once tapped.
+ *   - sendInteractiveMessage also attaches a `biz_bot: '1'` additional
+ *     node to non-group JIDs. That flag is the WhatsApp Business Bot
+ *     API marker; on a personal WA account (NOTIFY_TARGET_NUMBER =
+ *     6285733370411 in our case) the WA server can silently filter or
+ *     reject messages carrying that flag, since the sender isn't
+ *     actually a registered Business Bot.
+ *   - The bot this migrated from (`whatsapp-bot/`) used
+ *     `Hanz.sendMessage(jid, { text, footer, interactive: { buttons: [...] } })`
+ *     directly — that path worked. We replicate it here verbatim so
+ *     messages render as ordinary chat messages with a tappable button,
+ *     not as view-once / business-bot stanzas.
+ *
+ * Reliability cascade (mirrors the original `sendWithButton`):
+ *   1. Path 1: `sendMessage` with `interactive.buttons[name=cta_url]`
+ *      — current WhatsApp API, what we WANT to succeed.
+ *   2. Path 2 (fallback): legacy `buttons` array with `type: 1` URL
+ *      button. Older API but still recognised by all WA clients.
+ *   3. Path 3 (final fallback): plain text only — guaranteed to deliver
+ *      even if all button APIs reject. The text body always contains
+ *      the raw URL (WhatsApp auto-links bare URLs), so the recipient
+ *      can still tap through.
  *
  * @param {WASocket} Hanz — the active Baileys socket.
  * @param {string} jid    — destination JID (e.g. `62857...@s.whatsapp.net`).
  * @param {object} content — { text, footer?, buttons: [{ text, url }] }
- * @returns {Promise<{ ok: boolean, path: 'cta_url' | 'text-fallback', error?: string }>}
+ * @returns {Promise<{ ok: boolean, path: 'cta_url' | 'buttons' | 'text-fallback', error?: string }>}
  */
 async function sendCtaUrlButton(Hanz, jid, content) {
     const { text, footer = '', buttons = [] } = content;
+    const firstBtn = buttons[0] || { text: 'Buka', url: 'https://nelsen.web.id' };
 
+    // Path 1: modern `interactive` shape — direct sendMessage, no
+    // viewOnceMessage wrapper, no biz_bot node. Proven to work in the
+    // previous bot (whatsapp-bot/src/baileys/connection.ts:sendWithButton).
     try {
-        const interactiveMsg = proto.Message.InteractiveMessage.fromObject({
-            body: { text },
-            footer: { text: footer },
-            header: { hasMediaAttachment: false },
-            nativeFlowMessage: {
-                buttons: buttons.map(btn => ({
-                    name: 'cta_url',
-                    buttonParamsJson: JSON.stringify({
-                        display_text: btn.text,
-                        url: btn.url,
-                        merchant_url: btn.url,
-                    })
-                })),
-                messageParamsJson: ''
-            }
+        await Hanz.sendMessage(jid, {
+            text,
+            footer,
+            interactive: {
+                buttons: [
+                    {
+                        name: 'cta_url',
+                        buttonParamsJson: JSON.stringify({
+                            display_text: firstBtn.text,
+                            url: firstBtn.url,
+                        }),
+                    },
+                ],
+            },
         });
-
-        await relayInteractive(Hanz, jid, buildMessage(jid, interactiveMsg), 'cta_url');
         return { ok: true, path: 'cta_url' };
-    } catch (err) {
-        // Native button failed to render — fall back to plain text.
-        // The text body contains the URL as plain text, so WhatsApp
-        // auto-links it and the recipient can still tap.
+    } catch (err1) {
+        // Path 2: legacy `buttons` shape with `type: 1` URL button.
         try {
-            await Hanz.sendMessage(jid, { text });
-            return { ok: true, path: 'text-fallback', error: err?.message || String(err) };
-        } catch (err2) {
+            await Hanz.sendMessage(jid, {
+                text,
+                footer,
+                buttons: [
+                    {
+                        buttonId: `url:${firstBtn.url}`,
+                        buttonText: { displayText: firstBtn.text },
+                        type: 1,
+                    },
+                ],
+            });
             return {
-                ok: false,
-                path: 'text-fallback',
-                error: `cta_url=${err?.message || String(err)}; text=${err2?.message || String(err2)}`,
+                ok: true,
+                path: 'buttons',
+                error: `interactive=${err1?.message || String(err1)}`,
             };
+        } catch (err2) {
+            // Path 3: plain text — always works.
+            try {
+                await Hanz.sendMessage(jid, { text });
+                return {
+                    ok: true,
+                    path: 'text-fallback',
+                    error: `interactive=${err1?.message || String(err1)}; buttons=${err2?.message || String(err2)}`,
+                };
+            } catch (err3) {
+                return {
+                    ok: false,
+                    path: 'text-fallback',
+                    error: `interactive=${err1?.message || String(err1)}; buttons=${err2?.message || String(err2)}; text=${err3?.message || String(err3)}`,
+                };
+            }
         }
     }
 }
