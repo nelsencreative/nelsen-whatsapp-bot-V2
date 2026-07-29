@@ -29,6 +29,14 @@
     "uuid": "^10.0.0",
     "yt-dlp-wrap": "^2.3.12"
   },
+  "overrides": {
+    "libsignal": {
+      ".": "^6.0.0"
+    },
+    "@whiskeysockets/baileys": {
+      "libsignal": "^6.0.0"
+    }
+  },
   "engines": {
     "node": ">=18.0.0"
   },
