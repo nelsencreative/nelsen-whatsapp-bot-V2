@@ -1,26 +1,25 @@
 module.exports = {
     //Nama owner
-    ownerName: 'Haris s',
+    ownerName: 'Nelsen Creative',
 
     // Nama bot
-    botName: 'WhatsApp Bot',
+    botName: 'Nelsen Studio Bot',
 
-    footerTxt: 'Powered by ẉHarisSyc.com',
+    footerTxt: 'Powered by nelsen.web.id',
 
     // Prefix command (contoh: ! . /)\
-    prefix: '!',
+    prefix: ['!','.','/','#','?'],
 
     // Super Owner — hanya 1 nomor, akses penuh termasuk manage co-owner
-    superOwner: '6289999999999',
+    superOwner: '6285733370411',
 
     // Co-Owner — bisa lebih dari satu, akses owner biasa
     coOwner: [
-        '6289999999999',
         // '6289999999999',
     ],
 
     // Mode bot: 'public' → semua orang | 'self' → hanya owner
-    botMode: 'public',
+    botMode: 'self',
 
     // Otomatis centang biru pesan yang masuk
     autoRead: true,
@@ -38,5 +37,5 @@ module.exports = {
     // LICENSE CONFIG (TAMBAH INI)
     // ═══════════════════════════════════════════════════════
     licenseKey: 'OTP-xxxxx',                    // ← Kode dari kamu
-    botNumber: '6289999999999',                         // ← Nomor WA bot ini
+    botNumber: '6287811007088',                         // ← Nomor WA bot ini
 };
