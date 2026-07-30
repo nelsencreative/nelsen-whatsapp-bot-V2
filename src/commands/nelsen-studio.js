@@ -15,6 +15,12 @@
  *   !statusweb / .statusweb                      — show current site status.
  *   !status {mode} / .status {mode}              — toggle status (legacy simple).
  *   !status {fields} / .status {fields}          — full multi-field edit (pipe).
+ *   !send {nomor}|{pesan} / .send ...            — super-owner DM-only.
+ *                                                  Bot sends `{pesan}` to
+ *                                                  `{nomor}` as if it were
+ *                                                  the bot itself, with a
+ *                                                  cta_url button pointing
+ *                                                  at `config.urlButtonSend`.
  *   !notif {judul}|{isi} / .notif {judul}|{isi}  — admin broadcast. Fans out
  *                                                  an FCM push to every user
  *                                                  with a registered
@@ -44,6 +50,7 @@ const {
     triggerFcmPush,
 } = require('../lib/supabase');
 const { getLogger } = require('../lib/logger');
+const { phoneToJid } = require('../lib/formatter');
 
 const log = getLogger().child({ mod: 'commands.nelsen-studio' });
 
@@ -446,6 +453,203 @@ const handler = async (m) => {
         }
 
         // ────────────────────────────────────────────────────────────
+        case 'send': {
+            // Bot-initiated send: pipe `{nomor}|{pesan}` dari owner,
+            // bot forward ke nomor tujuan dengan tombol CTA_URL.
+            //
+            // Why this exists:
+            //   Admin kadang butuh kirim pesan atas nama brand
+            //   langsung dari WhatsApp tanpa buka phone/webapp —
+            //   mis. konfirmasi order, follow-up invoice, atau
+            //   kontak personal yang tercatat di profil user. Spam-
+            //   prevention: kita batasi ke super-owner (sama
+            //   seperti `!notif` dan `!status`).
+            //
+            // Format:
+            //   `{prefix}send {nomor}|{pesan}`
+            //
+            // Contoh:
+            //   `!send 6285733370411|halo ini nelsen`
+            //   `!send 085733370411|halo`           (auto-normalize)
+            //
+            // Akses:
+            //   - Super-owner only (sejalan dengan `!notif`).
+            //   - DM-only. Di grup admin tidak akan lihat reply
+            //     sama sekali (`return` tanpa reply). Alasan:
+            //     command ini sering sebut nomor + isi pesan, dan
+            //     membalas di grup adalah privacy leak kepada
+            //     semua member lain.
+            //
+            // Bentuk pesan yang dikirim ke tujuan:
+            //   - body: `{pesan}` (apa adanya, tanpa prefix "Bot:").
+            //   - footer: config.footerTxt (atau fallback).
+            //   - tombol: cta_url dengan display_text "Buka Nelsen
+            //     Studio" dan url `config.urlButtonSend` (default
+            //     https://nelsen.web.id). Itu tombol persis mengikuti
+            //     shape `sendCtaUrlButton` yang sudah terbukti jalan
+            //     untuk dispatcher orders/invoices — jadi kita pakai
+            //     helper yang sama persis, menghindari "CTAs arrive
+            //     as text-only" bug yang sudah-sudah.
+            //
+            // Audit:
+            //   Setiap send di-log ke pino dengan
+            //     `{ from, to, messageLength, targetExists }`
+            //   sehingga ada trail kalau owner pakai `!send` untuk
+            //   hal sensitif. Log ini ke stdout/stderr Pterodactyl,
+            //   bukan ke WhatsApp admin.
+            if (!isSuperOwner) {
+                return m.reply({ text: '❌ Khusus Super Owner!' });
+            }
+
+            if (isGroup) {
+                // DM-only — silent ignore di grup supaya admin tidak
+                // bocorin nomor/pesan ke member grup lain.
+                return;
+            }
+
+            if (!fullArgs || !fullArgs.trim()) {
+                return m.reply({
+                    text:
+                        `📌 Format: \`${p}send {nomor}|{pesan}\`\n\n` +
+                        `Contoh:\n` +
+                        `\`${p}send 6285733370411|halo ini nelsen\`\n\n` +
+                        `Nomor tujuan akan di-normalisasi (08xx → 628xx). ` +
+                        `Pesan harus mengandung satu karakter (pipe) sebagai ` +
+                        `pemisah nomor dan body.`,
+                });
+            }
+
+            // Pipe split: split pada PIPE PERTAMA saja. Body pesan
+            // boleh mengandung `|` (mis. "Halo | saya Nelsen"), tapi
+            // pipe pertama adalah pemisah `nomor|body` yang tetap.
+            const raw = String(fullArgs).trim();
+            const pipeIdx = raw.indexOf('|');
+            if (pipeIdx === -1) {
+                return m.reply({
+                    text:
+                        `❌ Format salah. Pakai \`|\` sebagai pemisah nomor dan pesan.\n\n` +
+                        `Contoh:\n` +
+                        `\`${p}send 6285733370411|halo ini nelsen\``,
+                });
+            }
+
+            const rawPhone = raw.slice(0, pipeIdx).trim();
+            const messageBody = raw.slice(pipeIdx + 1).trim();
+
+            if (!rawPhone || !messageBody) {
+                return m.reply({
+                    text:
+                        `❌ Nomor atau pesan kosong.\n\n` +
+                        `Contoh:\n\`${p}send 6285733370411|halo\``,
+                });
+            }
+
+            // Normalisasi nomor. Auto-rewrite 0xxxxxxxx → 62xxxxxxxx
+            // untuk admin yang terbiasa pakai format lokal.
+            const normalized = normalizePhone(rawPhone);
+            if (!normalized) {
+                return m.reply({
+                    text:
+                        `❌ Nomor tidak valid: \`${rawPhone}\`\n\n` +
+                        `Format yang diterima:\n` +
+                        `• \`628xxxxxxxxxx\` (internasional)\n` +
+                        `• \`08xxxxxxxxxx\` (otomatis dikonversi ke 62)\n\n` +
+                        `Minimal 9 digit, maksimal 15 digit (standar E.164).`,
+                });
+            }
+
+            // Soft cap panjang pesan. WhatsApp text allow sampai ~64k,
+            // tapi di atas ±4000 char pesan pecah jadi multiple
+            // bubble di recipient chat — UX buruk. Soft-reject lebih
+            // awal dengan instruksi yang jelas.
+            const MAX_BODY = 4000;
+            if (messageBody.length > MAX_BODY) {
+                return m.reply({
+                    text:
+                        `❌ Pesan terlalu panjang (${messageBody.length} karakter). ` +
+                        `Maksimal ${MAX_BODY} karakter per kirim.`,
+                });
+            }
+
+            const targetJid = phoneToJid(normalized);
+            const senderNumber = m.senderNumber || '(unknown)';
+            const buttonUrl = config.urlButtonSend || 'https://nelsen.web.id';
+
+            // ── Audit log (sebelum attempt). Kalau bot crash di
+            // tengah attempt, log entry ini tetap muncul. ──
+            log.info({
+                cmd: 'send',
+                from: senderNumber,
+                to: normalized,
+                jid: targetJid,
+                messageLength: messageBody.length,
+            }, 'send: dispatch start');
+
+            // ── Kirim via helper yang sudah terbukti aman. Pakai
+            // `sendCtaUrlButton` (dipakai dispatcher orders) — shape
+            // persis sama dengan `!sc` di general.js:94-107 yang
+            // render normal di chat recipient. Helper ini melakukan
+            // pre-flight socket check + fallback text-only kalau
+            // CTA gagal (lihat interactiveHelper.js:210). Kalau helper
+            // throw (mis. socket null), kita tangkap dan reply
+            // error-friendly. ──
+            let sendResult;
+            try {
+                const { sendCtaUrlButton } = require('../utils/interactiveHelper');
+                sendResult = await sendCtaUrlButton(Hanz, targetJid, {
+                    text: messageBody,
+                    footer: config.footerTxt || '> Bot Nelsen Studio',
+                    buttons: [{ text: 'Buka Nelsen Studio', url: buttonUrl }],
+                });
+            } catch (err) {
+                log.error({
+                    cmd: 'send',
+                    from: senderNumber,
+                    to: normalized,
+                    err: err?.message || String(err),
+                }, 'send: dispatch threw');
+                return m.reply({
+                    text:
+                        `❌ Gagal kirim ke ${normalized}. Error: ` +
+                        `\`${err?.message || String(err)}\`\n\n` +
+                        `Cek koneksi bot / status socket.`,
+                });
+            }
+
+            log.info({
+                cmd: 'send',
+                from: senderNumber,
+                to: normalized,
+                path: sendResult?.path,
+                ok: sendResult?.ok,
+            }, 'send: dispatch done');
+
+            if (!sendResult?.ok) {
+                return m.reply({
+                    text:
+                        `❌ Gagal kirim ke ${normalized}.\n` +
+                        `Path: \`${sendResult?.path || 'unknown'}\`\n` +
+                        `Error: \`${sendResult?.error || '-'}\``,
+                });
+            }
+
+            // Reply konfirmasi ke admin. Memberi tahu path yang
+            // dipakai (cta_url vs text-fallback) supaya admin tahu
+            // kalau recipient cuma dapat plain text (mungkin button
+            // tidak nge-render di versi WA mereka).
+            const pathNote = sendResult.path === 'cta_url'
+                ? '✅ tombol CTA tampil normal.'
+                : `⚠️ path fallback \`${sendResult.path}\` — pesan terkirim tapi tombol mungkin tidak tampil di recipient.`;
+
+            return m.reply({
+                text:
+                    `✅ Pesan terkirim ke *${normalized}*.\n` +
+                    `Path: \`${sendResult.path}\`\n` +
+                    `${pathNote}`,
+            });
+        }
+
+        // ────────────────────────────────────────────────────────────
         case 'notif': {
             // Admin broadcast — fans out a single notification to
             // EVERY user that has a registered `fcm_token` in
@@ -607,6 +811,42 @@ function formatRupiah(n) {
     return 'IDR ' + num.toLocaleString('id-ID', {
         maximumFractionDigits: 0,
     });
+}
+
+/**
+ * Normalize an admin-typed phone number to its E.164 digit form.
+ *
+ * Accepts:        "6285733370411"  (international)
+ *                 "085733370411"   (local with leading 0)
+ *                 "+62 857-3337-0411"
+ *                 "62 857 33370411"
+ *
+ * Returns the digits-only E.164 form (e.g. "6285733370411"), or
+ * `null` when the input is malformed (too short, contains letters,
+ * wrong country code, etc.).
+ *
+ * Rules:
+ *   - Strip every non-digit character (`+`, spaces, dashes, parens).
+ *   - If the result starts with `0`, replace the leading `0` with
+ *     `62` (the Indonesian country code). This matches the project's
+ *     primary audience; Indonesian admins naturally type `08xx` and
+ *     we should not require them to remember the `62` prefix.
+ *   - If the result does NOT start with `62` (after the `0` → `62`
+ *     rewrite), reject. We can't tell whether `81xxxxxxxx` is Japan
+ *     or a typo of `62`, so we err on the side of safety.
+ *   - Minimum length 9 digits, maximum 15 digits (ITU-T E.164 spec).
+ */
+function normalizePhone(raw) {
+    if (raw == null) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (!digits) return null;
+    let normalized = digits;
+    if (normalized.startsWith('0')) {
+        normalized = '62' + normalized.slice(1);
+    }
+    if (!normalized.startsWith('62')) return null;
+    if (normalized.length < 9 || normalized.length > 15) return null;
+    return normalized;
 }
 
 module.exports = handler;

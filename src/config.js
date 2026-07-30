@@ -38,4 +38,24 @@ module.exports = {
     // ═══════════════════════════════════════════════════════
     licenseKey: 'OTP-xxxxx',                    // ← Kode dari kamu
     botNumber: '6287811007088',                         // ← Nomor WA bot ini
+
+    // ═══════════════════════════════════════════════════════
+    // URL UNTUK BUTTON `!send`
+    // ═══════════════════════════════════════════════════════
+    //
+    // Dipakai oleh command `!send {nomor}|{pesan}` di nelsen-studio.js
+    // — tombol CTA_URL pada pesan yang bot kirim ke nomor tujuan
+    // mengarah ke URL ini. Default mengikuti konvensi brand bot yang
+    // lain: halaman utama Nelsen Studio. Ganti ke halaman internal
+    // (mis. /inbox) kalau audience-nya user webapp — biarkan default
+    // untuk audience umum.
+    //
+    // Contoh pesan yang dihasilkan:
+    //   body:        "{pesan}"
+    //   button text: "Buka Nelsen Studio"
+    //   button url:  urlButtonSend
+    //
+    // Perubahan nilai ini langsung生效 tanpa restart karena command
+    // baca `config.urlButtonSend` setiap kali dipanggil (bukan cache).
+    urlButtonSend: 'https://nelsen.web.id',
 };
