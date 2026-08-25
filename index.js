@@ -252,18 +252,25 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     if (!Hanz.authState.creds.registered) {
         if (isMain) {
             if (!phoneNumber) {
-                console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
-                console.log(chalk.white('Format nomor gunakan kode negara, contoh: 6212345xxxxx\n'));
+    // Utamakan ambil dari Environment Variable Railway dulu
+    const envPhone = process.env.PHONE_NUMBER;
+    
+    if (envPhone) {
+        phoneNumber = envPhone.replace(/\D/g, '');
+    } else {
+        console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
+        console.log(chalk.white('Format nomor gunakan kode negara, contoh: 6212345xxxxx\n'));
 
-                const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
-                phoneNumber = input.replace(/\D/g, '');
+        const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
+        phoneNumber = input.replace(/\D/g, '');
+    }
 
-                if (!phoneNumber.match(/^\d{10,15}$/)) {
-                    console.log(chalk.red('❌ Nomor tidak valid! Aplikasi dihentikan.'));
-                    process.exit(1);
-                }
+    if (!phoneNumber.match(/^\d{10,15}$/)) {
+        console.log(chalk.red('❌ Nomor tidak valid! Aplikasi dihentikan.'));
+        process.exit(1);
+    }
             }
-
+            
             console.log(chalk.gray('⏳ Menunggu koneksi ke server WhatsApp...'));
             await pairingReady;
 
