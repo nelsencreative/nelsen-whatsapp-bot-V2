@@ -117,7 +117,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         logger,
         printQRInTerminal: false,
         auth: state,
-        browser: ['Linux', 'Firefox', '120.0'],
+        browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: true,
         syncFullHistory: false,
         markOnlineOnConnect: true,
