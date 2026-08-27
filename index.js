@@ -267,21 +267,14 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             
             console.log(chalk.gray('⏳ Menunggu koneksi ke server WhatsApp...'));
             await pairingReady;
+            await delay(3000);
 
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    const pairingCode = await Hanz.requestPairingCode(phoneNumber);
-                    console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
-                    console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
-                    break;
-                } catch (err) {
-                    console.log(chalk.yellow(`[!] Percobaan ${attempt}/3 gagal: ${err.message}`));
-                    if (attempt >= 3) {
-                        console.log(chalk.red('❌ Gagal generate pairing code setelah 3 percobaan.'));
-                        process.exit(1);
-                    }
-                    await delay(5000);
-                }
+            try {
+                const pairingCode = await Hanz.requestPairingCode(phoneNumber);
+                console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
+                console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
+            } catch (err) {
+                console.log(chalk.yellow(`[!] Gagal minta pairing code: ${err.message}`));
             }
         } else if (customPhone) {
             setTimeout(async () => {
