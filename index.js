@@ -199,15 +199,15 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 ? lastDisconnect.error.output.statusCode
                 : null;
 
-            // HANYA hapus session kalau beneran logged out SETELAH terdaftar
-            if (statusCode === DisconnectReason.loggedOut && Hanz.authState.creds.registered) {
-                console.log(chalk.red(`\n[!] Sesi ${instanceKey} terindikasi Logged Out. Membersihkan isi folder session...`));
+            // Jika error 401 / DisconnectReason.loggedOut -> LANGSUNG SAPU BERSIH!
+            if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
+                console.log(chalk.red(`\n[!] Sesi ${instanceKey} terindikasi 401 / Logged Out. Membersihkan isi folder session...`));
                 clearSessionFolder(authFolder);
                 delete global.conns[instanceKey];
 
                 if (isMain) {
-                    console.log(chalk.yellow('[!] Jeda 10 detik sebelum mencoba reconnect...'));
-                    await delay(10000);
+                    console.log(chalk.yellow('[!] Jeda 5 detik sebelum meminta Pairing Code baru...'));
+                    await delay(5000);
                     return startBot(authFolder, isMain, customPhone);
                 }
                 return;
