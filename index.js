@@ -88,10 +88,25 @@ function printBanner() {
     console.log(chalk.yellow("INFO:"), chalk.green("Jika code pairing tidak muncul tekan enter 1-2x lagi\n"));
 }
 
+function clearSessionFolder(folderPath) {
+    try {
+        if (fs.existsSync(folderPath)) {
+            const files = fs.readdirSync(folderPath);
+            for (const file of files) {
+                fs.rmSync(path.join(folderPath, file), { recursive: true, force: true });
+            }
+            console.log(chalk.green('✅ Isi folder session berhasil dibersihkan!'));
+        }
+    } catch (e) {
+        console.error(chalk.red('❌ Gagal bersihin folder session:'), e.message);
+    }
+}
+
 plugins.init();
 
 let phoneNumber = null;
 let isFirstConnect = true;
+let isPairingRequested = false;
 
 global.conns = global.conns || {};
 
@@ -104,8 +119,8 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     }
 
     if (process.env.RESET_SESSION === 'true') {
-        console.log(chalk.red('🧹 Menghapus session lama dari Volume...'));
-        try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
+        console.log(chalk.red('🧹 Reset session dipicu via Environment Variable...'));
+        clearSessionFolder(authFolder);
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
@@ -146,26 +161,39 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         messageHandler.handleGroupParticipants(Hanz, update);
     });
 
-    let pairingReady = null;
-    let pairingReadyResolve = null;
-
-    if (!Hanz.authState.creds.registered && isMain) {
-        pairingReady = new Promise(resolve => { pairingReadyResolve = resolve; });
-    }
-
     Hanz.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        if (connection === 'connecting' && pairingReadyResolve) {
-            setTimeout(() => {
-                if (pairingReadyResolve) {
-                    const fn = pairingReadyResolve;
-                    pairingReadyResolve = null;
-                    fn();
+
+        // PINTU PAIRING: Cuma minta pairing code kalau server WA udah siap (QR terdeteksi)
+        if (qr && !Hanz.authState.creds.registered && isMain && !isPairingRequested) {
+            isPairingRequested = true;
+            
+            if (!phoneNumber) {
+                const envPhone = process.env.PHONE_NUMBER;
+                if (envPhone) {
+                    phoneNumber = envPhone.replace(/\D/g, '');
+                } else {
+                    console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
+                    const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
+                    phoneNumber = input.replace(/\D/g, '');
                 }
-            }, 5000);
+            }
+
+            console.log(chalk.gray('⏳ Socket WhatsApp siap, meminta Pairing Code...'));
+            await delay(3000); // Tunggu socket beneran tenang
+
+            try {
+                const pairingCode = await Hanz.requestPairingCode(phoneNumber);
+                console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
+                console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
+            } catch (err) {
+                console.log(chalk.red(`[!] Gagal minta pairing code: ${err.message}`));
+                isPairingRequested = false; // Izinkan coba lagi kalau gagal
+            }
         }
 
         if (connection === 'close') {
+            isPairingRequested = false;
             if (isMain) {
                 try { spinnies.remove("waiting"); } catch (e) { }
             }
@@ -175,12 +203,13 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 : null;
 
             if (statusCode === DisconnectReason.loggedOut) {
-                console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out. Hapus folder session...`));
-                try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
+                console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out. Membersihkan isi folder session...`));
+                clearSessionFolder(authFolder);
                 delete global.conns[instanceKey];
 
                 if (isMain) {
-                    await delay(3000);
+                    console.log(chalk.yellow('[!] Jeda 10 detik sebelum mencoba lagi...'));
+                    await delay(10000);
                     return startBot(authFolder, isMain, customPhone);
                 }
                 return;
@@ -188,13 +217,14 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
 
             const isNormalRestart = statusCode === 515 || statusCode === 408;
             if (!isNormalRestart && isMain) {
-                console.log(chalk.yellow(`[!] Koneksi utama terputus (${statusCode}), mencoba menghubungkan kembali...`));
+                console.log(chalk.yellow(`[!] Koneksi utama terputus (${statusCode}), mencoba menghubungkan kembali dalam 5 detik...`));
             }
 
-            await delay(3000);
+            await delay(5000);
             startBot(authFolder, isMain, customPhone);
 
         } else if (connection === 'open') {
+            isPairingRequested = false;
             const name = Hanz.user?.name || Hanz.user?.id?.split(':')[0] || 'Unknown';
 
             if (isMain) {
@@ -243,59 +273,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             }
         }
     });
-
-    if (!Hanz.authState.creds.registered) {
-        if (isMain) {
-            if (!phoneNumber) {
-                const envPhone = process.env.PHONE_NUMBER;
-                
-                if (envPhone) {
-                    phoneNumber = envPhone.replace(/\D/g, '');
-                } else {
-                    console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
-                    console.log(chalk.white('Format nomor gunakan kode negara, contoh: 6212345xxxxx\n'));
-
-                    const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
-                    phoneNumber = input.replace(/\D/g, '');
-                }
-
-                if (!phoneNumber.match(/^\d{10,15}$/)) {
-                    console.log(chalk.red('❌ Nomor tidak valid! Aplikasi dihentikan.'));
-                    process.exit(1);
-                }
-            }
-            
-            console.log(chalk.gray('⏳ Menunggu koneksi ke server WhatsApp...'));
-            await pairingReady;
-            await delay(3000);
-
-            try {
-                const pairingCode = await Hanz.requestPairingCode(phoneNumber);
-                console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
-                console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
-            } catch (err) {
-                console.log(chalk.yellow(`[!] Gagal minta pairing code: ${err.message}`));
-            }
-        } else if (customPhone) {
-            setTimeout(async () => {
-                try {
-                    await delay(3000);
-                    const code = await Hanz.requestPairingCode(customPhone);
-                    if (pairingRequests[customPhone]?.resolve) {
-                        const cb = pairingRequests[customPhone];
-                        delete pairingRequests[customPhone];
-                        cb.resolve(code);
-                    }
-                } catch (err) {
-                    if (pairingRequests[customPhone]?.reject) {
-                        const cb = pairingRequests[customPhone];
-                        delete pairingRequests[customPhone];
-                        cb.reject(err);
-                    }
-                }
-            }, 1000);
-        }
-    }
 
     return Hanz;
 }
