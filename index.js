@@ -20,8 +20,7 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    delay,
-    Browsers
+    delay
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -46,6 +45,7 @@ console.log = function (...args) {
     if (str && typeof str === 'object' && str?._chains !== undefined) return;
     _origConsoleLog.apply(console, args);
 };
+
 const spinnies = new Spinnies({
     color: "blue",
     succeedColor: "green",
@@ -85,7 +85,6 @@ function printBanner() {
     console.log(chalk.cyan(" • Thanks To Wong Hore Team & O.R.B Group"));
     console.log(chalk.cyan(" • Info Script: https://github.com/harissfx/basebot-wa"));
     console.log(chalk.cyan("================================================="));
-    console.log(chalk.yellow("INFO:"), chalk.green("Jika code pairing tidak muncul tekan enter 1-2x lagi\n"));
 }
 
 function clearSessionFolder(folderPath) {
@@ -109,7 +108,6 @@ let isFirstConnect = true;
 let isPairingRequested = false;
 
 global.conns = global.conns || {};
-
 let pairingRequests = {};
 
 async function startBot(authFolder = config.authFolder, isMain = true, customPhone = null) {
@@ -137,14 +135,14 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         logger,
         printQRInTerminal: false,
         auth: state,
-        browser: Browsers.ubuntu('Chrome'),
-        generateHighQualityLinkPreview: true,
+        browser: ['Mac OS', 'Chrome', '121.0.0'],
+        generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 120000,
-        keepAliveIntervalMs: 30000,
-        retryRequestDelayMs: 250,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
+        retryRequestDelayMs: 500,
         maxMsgRetryCount: 5,
     });
 
@@ -164,7 +162,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     Hanz.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // PINTU PAIRING: Cuma minta pairing code kalau server WA udah siap (QR terdeteksi)
         if (qr && !Hanz.authState.creds.registered && isMain && !isPairingRequested) {
             isPairingRequested = true;
             
@@ -180,7 +177,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             }
 
             console.log(chalk.gray('⏳ Socket WhatsApp siap, meminta Pairing Code...'));
-            await delay(3000); // Tunggu socket beneran tenang
+            await delay(3000);
 
             try {
                 const pairingCode = await Hanz.requestPairingCode(phoneNumber);
@@ -188,7 +185,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
             } catch (err) {
                 console.log(chalk.red(`[!] Gagal minta pairing code: ${err.message}`));
-                isPairingRequested = false; // Izinkan coba lagi kalau gagal
+                isPairingRequested = false;
             }
         }
 
@@ -202,13 +199,14 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 ? lastDisconnect.error.output.statusCode
                 : null;
 
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out. Membersihkan isi folder session...`));
+            // HANYA hapus session kalau beneran logged out SETELAH terdaftar
+            if (statusCode === DisconnectReason.loggedOut && Hanz.authState.creds.registered) {
+                console.log(chalk.red(`\n[!] Sesi ${instanceKey} terindikasi Logged Out. Membersihkan isi folder session...`));
                 clearSessionFolder(authFolder);
                 delete global.conns[instanceKey];
 
                 if (isMain) {
-                    console.log(chalk.yellow('[!] Jeda 10 detik sebelum mencoba lagi...'));
+                    console.log(chalk.yellow('[!] Jeda 10 detik sebelum mencoba reconnect...'));
                     await delay(10000);
                     return startBot(authFolder, isMain, customPhone);
                 }
@@ -217,7 +215,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
 
             const isNormalRestart = statusCode === 515 || statusCode === 408;
             if (!isNormalRestart && isMain) {
-                console.log(chalk.yellow(`[!] Koneksi utama terputus (${statusCode}), mencoba menghubungkan kembali dalam 5 detik...`));
+                console.log(chalk.yellow(`[!] Koneksi terputus (${statusCode}), reconnecting dalam 5 detik...`));
             }
 
             await delay(5000);
@@ -237,7 +235,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 spinnies.add("waiting", { text: "." });
 
                 autoLoadJadibot();
-
                 messageHandler.resolveOwnerLids(Hanz).catch(() => { });
 
                 if (config.channelId) {
@@ -283,7 +280,6 @@ global.createNewBotInstance = async (targetPhone) => {
     if (fs.existsSync(path.join(sessionPath, 'creds.json'))) {
         const creds = JSON.parse(fs.readFileSync(path.join(sessionPath, 'creds.json'), 'utf-8'));
         if (creds.registered) {
-
             if (global.conns[targetPhone]) {
                 throw new Error("Bot dengan nomor tersebut sudah aktif dan terhubung.");
             }
@@ -293,7 +289,6 @@ global.createNewBotInstance = async (targetPhone) => {
     }
 
     return new Promise((resolve, reject) => {
-
         pairingRequests[targetPhone] = { resolve, reject };
 
         startBot(sessionPath, false, targetPhone).catch(err => {
@@ -314,7 +309,6 @@ function autoLoadJadibot() {
     folders.forEach(folder => {
         const fullPath = path.join(sessionsDir, folder);
         if (fs.statSync(fullPath).isDirectory()) {
-
             if (fs.existsSync(path.join(fullPath, 'creds.json'))) {
                 console.log(chalk.blue(`[AUTOLOAD] Menghidupkan kembali clone bot: +${folder}`));
                 startBot(fullPath, false, folder).catch(() => { });
