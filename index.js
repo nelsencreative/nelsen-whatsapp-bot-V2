@@ -52,7 +52,7 @@ const spinnies = new Spinnies({
     spinner: {
         interval: 120,
         frames: [
-            "M", "Me", "Men", "Menu", "Menun", "Menung", "Menungg", "Menunggu ",
+            "M", "Me", "Men", "Menu", "Menun", "Menungg", "Menunggu ",
             "Menunggu P", "Menunggu Pes", "Menunggu Pesa", "Menunggu Pesan",
             "Menunggu Pesan.", "Menunggu Pesan..", "Menunggu Pesan...",
             "Menunggu Pesan..", "Menunggu Pesan.", "Menunggu Pesan",
@@ -102,19 +102,11 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         printBanner();
         isFirstConnect = false;
     }
-async function startBot(authFolder = config.authFolder, isMain = true, customPhone = null) {
-    if (isFirstConnect && isMain) {
-        printBanner();
-        isFirstConnect = false;
-    }
 
-    // ⬇️ TAMBAHIN BLOK INI DI SINI ⬇️
     if (process.env.RESET_SESSION === 'true') {
         console.log(chalk.red('🧹 Menghapus session lama dari Volume...'));
         try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
     }
-
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
@@ -182,7 +174,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 ? lastDisconnect.error.output.statusCode
                 : null;
 
-        if (statusCode === DisconnectReason.loggedOut) {
+            if (statusCode === DisconnectReason.loggedOut) {
                 console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out. Hapus folder session...`));
                 try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
                 delete global.conns[instanceKey];
@@ -221,18 +213,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                     } catch (e) { }
                 }
 
-                // ──────────────────────────────────────────────────────────
-                // Nelsen notifier boot — HTTP /notify + Supabase Realtime.
-                //
-                // Both are idempotent via module-level guards
-                // (global.botHttpStarted / channel) so this block is
-                // safe to run on every reconnect — only the first call
-                // does real work.
-                //
-                // Skipped when not the main instance (jadibot clones
-                // shouldn't bind the same port / subscribe to the same
-                // Supabase channel).
-                // ──────────────────────────────────────────────────────────
                 try {
                     startHttpServer(Hanz);
                 } catch (e) {
@@ -240,8 +220,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 }
 
                 try {
-                    // startRealtimeListener() may throw if loadEnv() is
-                    // missing required vars — don't let it crash the bot.
                     const { loadEnv: _loadEnv } = require('./src/lib/env');
                     if (_loadEnv().realtimeEnabled) {
                         startRealtimeListener(Hanz);
@@ -266,23 +244,22 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     if (!Hanz.authState.creds.registered) {
         if (isMain) {
             if (!phoneNumber) {
-    // Utamakan ambil dari Environment Variable Railway dulu
-    const envPhone = process.env.PHONE_NUMBER;
-    
-    if (envPhone) {
-        phoneNumber = envPhone.replace(/\D/g, '');
-    } else {
-        console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
-        console.log(chalk.white('Format nomor gunakan kode negara, contoh: 6212345xxxxx\n'));
+                const envPhone = process.env.PHONE_NUMBER;
+                
+                if (envPhone) {
+                    phoneNumber = envPhone.replace(/\D/g, '');
+                } else {
+                    console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
+                    console.log(chalk.white('Format nomor gunakan kode negara, contoh: 6212345xxxxx\n'));
 
-        const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
-        phoneNumber = input.replace(/\D/g, '');
-    }
+                    const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
+                    phoneNumber = input.replace(/\D/g, '');
+                }
 
-    if (!phoneNumber.match(/^\d{10,15}$/)) {
-        console.log(chalk.red('❌ Nomor tidak valid! Aplikasi dihentikan.'));
-        process.exit(1);
-    }
+                if (!phoneNumber.match(/^\d{10,15}$/)) {
+                    console.log(chalk.red('❌ Nomor tidak valid! Aplikasi dihentikan.'));
+                    process.exit(1);
+                }
             }
             
             console.log(chalk.gray('⏳ Menunggu koneksi ke server WhatsApp...'));
@@ -376,12 +353,6 @@ function autoLoadJadibot() {
 process.on('uncaughtException', (err) => console.error(chalk.red('[Error Uncaught]:'), err.message));
 process.on('unhandledRejection', (reason) => console.error(chalk.red('[Error Rejection]:'), reason));
 
-// ────────────────────────────────────────────────────────────────────────
-// Graceful shutdown for the notifier (HTTP server + Realtime channel).
-// Pterodactyl sends SIGTERM on restart; without this we'd leave the
-// /health endpoint half-listening and miss the UptimeRobot "host went
-// away" signal.
-// ────────────────────────────────────────────────────────────────────────
 process.on('SIGTERM', async () => {
     console.log(chalk.yellow('\n[shutdown] SIGTERM received — closing notifier…'));
     await stopRealtimeListener().catch(() => {});
