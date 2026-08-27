@@ -180,10 +180,11 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 delete global.conns[instanceKey];
 
                 if (isMain) {
-                   await delay(3000);
-                   return startBot(authFolder, isMain, customPhone);
+                    await delay(3000);
+                    return startBot(authFolder, isMain, customPhone);
+                }
+                return;
             }
-
 
             const isNormalRestart = statusCode === 515 || statusCode === 408;
             if (!isNormalRestart && isMain) {
