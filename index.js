@@ -102,6 +102,19 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         printBanner();
         isFirstConnect = false;
     }
+async function startBot(authFolder = config.authFolder, isMain = true, customPhone = null) {
+    if (isFirstConnect && isMain) {
+        printBanner();
+        isFirstConnect = false;
+    }
+
+    // ⬇️ TAMBAHIN BLOK INI DI SINI ⬇️
+    if (process.env.RESET_SESSION === 'true') {
+        console.log(chalk.red('🧹 Menghapus session lama dari Volume...'));
+        try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
@@ -169,12 +182,12 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 ? lastDisconnect.error.output.statusCode
                 : null;
 
-            if (statusCode === DisconnectReason.loggedOut) {
-                console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out.`));
-                if (isMain) process.exit(0);
+        if (statusCode === DisconnectReason.loggedOut) {
+                console.log(chalk.red(`\n[!] Sesi ${instanceKey} keluar/logged out. Hapus folder session...`));
+                try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
                 delete global.conns[instanceKey];
 
-                try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
+                if (isMain) process.exit(0);
                 return;
             }
 
