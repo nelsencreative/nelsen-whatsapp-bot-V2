@@ -179,9 +179,11 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 try { fs.rmSync(authFolder, { recursive: true, force: true }); } catch (e) { }
                 delete global.conns[instanceKey];
 
-                if (isMain) process.exit(0);
-                return;
+                if (isMain) {
+                   await delay(3000);
+                   return startBot(authFolder, isMain, customPhone);
             }
+
 
             const isNormalRestart = statusCode === 515 || statusCode === 408;
             if (!isNormalRestart && isMain) {
