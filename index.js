@@ -20,7 +20,8 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    delay
+    delay,
+    Browsers
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const P = require('pino');
@@ -135,7 +136,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         logger,
         printQRInTerminal: false,
         auth: state,
-        browser: ['Mac OS', 'Chrome', '121.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         markOnlineOnConnect: false,
@@ -199,7 +200,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 ? lastDisconnect.error.output.statusCode
                 : null;
 
-            // Jika error 401 / DisconnectReason.loggedOut -> LANGSUNG SAPU BERSIH!
             if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
                 console.log(chalk.red(`\n[!] Sesi ${instanceKey} terindikasi 401 / Logged Out. Membersihkan isi folder session...`));
                 clearSessionFolder(authFolder);
@@ -332,6 +332,9 @@ process.on('SIGINT', async () => {
     stopHttpServer();
     setTimeout(() => process.exit(0), 500).unref();
 });
+
+// Penahan Process Biar Container Gak Pernah Completed/Mati Pas Pairing
+setInterval(() => {}, 1000 * 60 * 60);
 
 startBot().catch((err) => {
     console.error(chalk.red('[Fatal Error]:'), err);
