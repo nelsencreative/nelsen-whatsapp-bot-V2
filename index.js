@@ -68,6 +68,16 @@ function question(query) {
     return new Promise(resolve => rl.question(query, ans => { rl.close(); resolve(ans); }));
 }
 
+// Helper Sanitasi Nomor Telepon (Ubah 08xx -> 628xx)
+function sanitizePhone(phone) {
+    if (!phone) return '';
+    let cleaned = phone.replace(/\D/g, '');
+    if (cleaned.startsWith('0')) {
+        cleaned = '62' + cleaned.slice(1);
+    }
+    return cleaned;
+}
+
 function printBanner() {
     console.clear();
     console.log(
@@ -136,13 +146,12 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         logger,
         printQRInTerminal: false,
         auth: state,
-        browser: Browsers.ubuntu('Chrome'),
+        browser: Browsers.ubuntu('Desktop'), // Browser lebih stabil untuk Pairing Code
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
+        keepAliveIntervalMs: 15000,
         retryRequestDelayMs: 500,
         maxMsgRetryCount: 5,
     });
@@ -169,25 +178,29 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             if (!phoneNumber) {
                 const envPhone = process.env.PHONE_NUMBER;
                 if (envPhone) {
-                    phoneNumber = envPhone.replace(/\D/g, '');
+                    phoneNumber = sanitizePhone(envPhone);
                 } else {
                     console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
                     const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
-                    phoneNumber = input.replace(/\D/g, '');
+                    phoneNumber = sanitizePhone(input);
                 }
+            } else {
+                phoneNumber = sanitizePhone(phoneNumber);
             }
 
             console.log(chalk.gray('⏳ Socket WhatsApp siap, meminta Pairing Code...'));
-            await delay(3000);
 
-            try {
-                const pairingCode = await Hanz.requestPairingCode(phoneNumber);
-                console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
-                console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
-            } catch (err) {
-                console.log(chalk.red(`[!] Gagal minta pairing code: ${err.message}`));
-                isPairingRequested = false;
-            }
+            setTimeout(async () => {
+                try {
+                    let pairingCode = await Hanz.requestPairingCode(phoneNumber);
+                    pairingCode = pairingCode?.match(/.{1,4}/g)?.join('-') || pairingCode;
+                    console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
+                    console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
+                } catch (err) {
+                    console.log(chalk.red(`[!] Gagal minta pairing code: ${err.message}`));
+                    isPairingRequested = false;
+                }
+            }, 2000);
         }
 
         if (connection === 'close') {
