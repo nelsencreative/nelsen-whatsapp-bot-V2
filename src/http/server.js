@@ -2,28 +2,20 @@
  * Express HTTP API for the notification bot.
  *
  * Routes:
- *   GET  /health   → 200, used by UptimeRobot to keep the host alive.
- *   POST /notify   → Bearer-protected; dispatches the WhatsApp send
- *                    based on `body.type`. Accepts multiple shapes:
- *                    - our internal `{type:"new_order", record:{…}}`
- *                    - Supabase webhook default
- *                      `{type:"INSERT", table:"orders", record:{…}}`
- *                    - Vercel native
- *                      `{type:"deployment.succeeded", data:{…}}`
- *
- * The actual notification logic lives in `../messages/dispatcher.js`
- * so the realtime listener can reuse it verbatim.
- *
- * The `sock` (Baileys WASocket) is passed in by the caller so this
- * module never reaches into globals — it stays testable.
+ *   GET  /health          → 200, used by UptimeRobot to keep the host alive.
+ *   POST /notify          → Bearer-protected; dispatches the WhatsApp send.
+ *   GET  /backup-session  → Bearer-protected; returns fresh `creds.json` as Base64 string.
  */
 
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 const { bearerAuth } = require("./auth-middleware.js");
 const { getLogger } = require("../lib/logger.js");
 const { loadEnv } = require("../lib/env.js");
 const { dispatchNotification } = require("../messages/dispatcher.js");
+const config = require("../config.js");
 
 const log = getLogger().child({ mod: "http" });
 
@@ -31,10 +23,7 @@ const log = getLogger().child({ mod: "http" });
  * Build the express app. Exported as a factory so `index.js` can mount
  * it on any port and we can also reuse it for local tests.
  *
- * @param {WASocket} sock  — the live Baileys socket. The dispatcher
- *   uses this to call `sendMessage`. It is captured via a getter so
- *   that a reconnect (which replaces `global.conns[instanceKey]` with
- *   a new Hanz instance) is reflected automatically.
+ * @param {WASocket} sock  — the live Baileys socket.
  * @returns {express.Express}
  */
 function buildApp(sock) {
@@ -49,10 +38,35 @@ function buildApp(sock) {
   });
 
   // ---------------------------------------------------------------------
+  // GET /backup-session — Bearer-protected session backup endpoint.
+  // Returns current `creds.json` encoded as Base64 for easy restore.
+  // ---------------------------------------------------------------------
+  app.get("/backup-session", bearerAuth, (_req, res) => {
+    try {
+      const authFolder = config.authFolder || path.join(__dirname, "../database/session");
+      const credsPath = path.join(authFolder, "creds.json");
+
+      if (!fs.existsSync(credsPath)) {
+        log.warn({ credsPath }, "Backup session requested but creds.json not found");
+        return res.status(404).json({ ok: false, reason: "creds.json not found" });
+      }
+
+      const credsData = fs.readFileSync(credsPath, "utf-8");
+      const base64Session = Buffer.from(credsData).toString("base64");
+
+      log.info("GET /backup-session successfully generated fresh session base64");
+      return res.status(200).json({
+        ok: true,
+        session_base64: base64Session,
+      });
+    } catch (e) {
+      log.error({ err: e?.message || String(e) }, "GET /backup-session failed");
+      return res.status(500).json({ ok: false, reason: e?.message || "Internal server error" });
+    }
+  });
+
+  // ---------------------------------------------------------------------
   // POST /notify — Bearer-authenticated dispatch.
-  //
-  // Log every incoming POST (auth'd or not) so we can prove from the
-  // bot logs whether inbound webhooks are actually reaching us.
   // ---------------------------------------------------------------------
   app.post(
     "/notify",
@@ -73,11 +87,6 @@ function buildApp(sock) {
     bearerAuth,
     async (req, res) => {
       const body = req.body ?? {};
-      // Resolve the live socket per-request — `sock` captured at
-      // buildApp() time is stale after a reconnect (startBot rebuilds
-      // Hanz and overwrites global.conns[instanceKey]). Falling back
-      // to `global.conns.session` ensures /notify always dispatches to
-      // the currently-connected WASocket.
       const result = await dispatchNotification(resolveLiveSocket(sock), body);
       res.status(result.ok ? 200 : 502).json({
         ok: result.ok,
@@ -92,16 +101,6 @@ function buildApp(sock) {
 
 /**
  * Resolve the currently-connected WASocket.
- *
- * Tries (in order):
- *   1. `global.conns.session` — the main bot's live socket (set by
- *      `index.js` line ~131 on every startBot call).
- *   2. The fallback `sock` parameter — used at startup before
- *      `global.conns.session` is populated, or when the socket lives
- *      outside the global registry (tests).
- *
- * Returns the socket or `null` if both lookups fail. The dispatcher
- * already handles `null` gracefully (returns `ok:false, path:"no-socket"`).
  */
 function resolveLiveSocket(fallback) {
   try {
@@ -115,14 +114,6 @@ function resolveLiveSocket(fallback) {
 
 /**
  * Start the HTTP server on the configured PORT.
- *
- * Idempotent: returns the existing instance if already started (guarded
- * by `global.botHttpStarted`). The caller (`index.js`) invokes this on
- * every reconnect but only the first call mounts the listener.
- *
- * @param {WASocket} sock  — live Baileys socket to wire into /notify.
- * @returns {http.Server | null}  — the server instance, or null if
- *   loadEnv() failed.
  */
 function startHttpServer(sock) {
   if (global.botHttpStarted) {
@@ -140,7 +131,7 @@ function startHttpServer(sock) {
 
   const app = buildApp(sock);
   const server = app.listen(env.port, () => {
-    log.info({ port: env.port }, "HTTP server listening (GET /health, POST /notify)");
+    log.info({ port: env.port }, "HTTP server listening (GET /health, POST /notify, GET /backup-session)");
   });
 
   global.botHttpStarted = true;
@@ -164,3 +155,4 @@ function stopHttpServer() {
 }
 
 module.exports = { buildApp, startHttpServer, stopHttpServer };
+      
