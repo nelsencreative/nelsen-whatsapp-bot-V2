@@ -217,7 +217,6 @@ async function dispatchNotification(sock, body) {
         case "custom_message": {
           // Expected record shape: { target: string (phone number), message: string }
           const target = stringField(record, "target") || stringField(body, "target");
-          const target = stringField(record, "target") || stringField(body, "target");
           const text = stringField(record, "message") || stringField(body, "message");
           if (!target || !text) {
             return { ok: false, type, reason: "missing target or message" };
