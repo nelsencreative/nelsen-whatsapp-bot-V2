@@ -116,6 +116,7 @@ function clearSessionFolder(folderPath) {
 plugins.init();
 
 let isFirstConnect = true;
+let envSessionFailed = false; // Penahan agar tidak restore berulang kali jika token mati
 
 global.conns = global.conns || {};
 let pairingRequests = {};
@@ -131,8 +132,8 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         clearSessionFolder(authFolder);
     }
 
-    // --- AUTO-RESTORE SESSION DARI SESSION_BASE64 ---
-    if (process.env.SESSION_BASE64) {
+    // --- AUTO-RESTORE SESSION DARI SESSION_BASE64 (DENGAN PROTEKSI LOOP) ---
+    if (process.env.SESSION_BASE64 && !envSessionFailed) {
         try {
             if (!fs.existsSync(authFolder)) {
                 fs.mkdirSync(authFolder, { recursive: true });
@@ -188,7 +189,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     Hanz.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Cetak QR Code otomatis ke terminal menggunakan qrcode-terminal
+        // Cetak QR Code otomatis ke terminal / log Railway menggunakan qrcode-terminal
         if (qr && !Hanz.authState.creds.registered && isMain) {
             console.log(chalk.cyan('\n📱 SCAN QR CODE DI BAWAH INI DENGAN WHATSAPP HP LU:'));
             qrcode.generate(qr, { small: true });
@@ -208,6 +209,13 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 clearSessionFolder(authFolder);
                 delete global.conns[instanceKey];
 
+                // Jika penyebabnya dari SESSION_BASE64 yang mati, kunci restore berikutnya!
+                if (process.env.SESSION_BASE64) {
+                    envSessionFailed = true;
+                    console.log(chalk.red.bold('\n❌ ERROR: SESSION_BASE64 di Railway sudah TIDAK VALID / EXPIRED!'));
+                    console.log(chalk.yellow('👉 Silakan buat Base64 dari creds.json baru di lokal, lalu perbarui variabel SESSION_BASE64 di Railway.\n'));
+                }
+
                 if (isMain) {
                     console.log(chalk.yellow('[!] Jeda 5 detik sebelum memuat QR Code baru...'));
                     await delay(5000);
@@ -225,6 +233,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             startBot(authFolder, isMain, customPhone);
 
         } else if (connection === 'open') {
+            envSessionFailed = false; // Reset status jika berhasil konek
             const name = Hanz.user?.name || Hanz.user?.id?.split(':')[0] || 'Unknown';
 
             if (isMain) {
