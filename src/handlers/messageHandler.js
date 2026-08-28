@@ -157,13 +157,16 @@ async function handleMessages(Hanz, m, isMain = true) {
         const text = extractMessageText(msg.message);
         if (!text) continue;
 
+        const senderNum = getSenderNumber(sender, msg);
+        const cleanSenderJid = senderNum ? `${senderNum}@s.whatsapp.net` : sender;
+
         if (!fromMe) {
             readline.clearLine(process.stdout, 0);
             readline.cursorTo(process.stdout, 0);
 
             console.log(
                 chalk.blue(`[INBOUND PM] `) +
-                chalk.cyan(sender) +
+                chalk.cyan(cleanSenderJid) +
                 chalk.white(` (${msg.pushName || 'User'}): ${text}`)
             );
         }
@@ -173,7 +176,7 @@ async function handleMessages(Hanz, m, isMain = true) {
 
         // =========================================================================
         // 🚀 FORWARD PESAN KE N8N WEBHOOK (N8N 9ROUTER AI & COMMAND CONTROL)
-        // Hanya pesan dari user lain (bukan bot sendiri) yang dilempar ke n8n
+        // Format JID dipastikan selalu @s.whatsapp.net agar balasan n8n presisi
         // =========================================================================
         if (!fromMe) {
             const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n.nelsen.web.id/webhook/wa-inbound';
@@ -181,7 +184,7 @@ async function handleMessages(Hanz, m, isMain = true) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    from: sender,
+                    from: cleanSenderJid,
                     text: text,
                     pushName: msg.pushName || 'User',
                     isOwner: checkOwner,
@@ -227,7 +230,7 @@ async function handleMessages(Hanz, m, isMain = true) {
                 try {
                     await handler({
                         Hanz, msg, sender,
-                        senderNumber: getSenderNumber(sender, msg),
+                        senderNumber: senderNum,
                         pushname: msg.pushName || 'Kak',
                         isGroup: false,
                         isOwner: checkOwner,
@@ -265,7 +268,6 @@ async function handleMessages(Hanz, m, isMain = true) {
 }
 
 async function handleGroupParticipants(Hanz, update) {
-    // Diposting kosong / abaikan event grup
     return;
 }
 
