@@ -116,7 +116,7 @@ function clearSessionFolder(folderPath) {
 plugins.init();
 
 let isFirstConnect = true;
-let envSessionFailed = false; // Penahan agar tidak restore berulang kali jika token mati
+let envSessionFailed = false;
 
 global.conns = global.conns || {};
 let pairingRequests = {};
@@ -132,7 +132,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         clearSessionFolder(authFolder);
     }
 
-    // --- AUTO-RESTORE SESSION DARI SESSION_BASE64 (DENGAN PROTEKSI LOOP) ---
+    // --- AUTO-RESTORE SESSION DARI SESSION_BASE64 ---
     if (process.env.SESSION_BASE64 && !envSessionFailed) {
         try {
             if (!fs.existsSync(authFolder)) {
@@ -178,6 +178,28 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
 
     Hanz.ev.on('creds.update', saveCreds);
 
+    // --- LOGIC PAIRING CODE VIA ENV ---
+    const usePairingCode = process.env.USE_PAIRING_CODE === 'true';
+    const targetPairingNumber = process.env.PAIRING_NUMBER || customPhone;
+
+    if (usePairingCode && !Hanz.authState.creds.registered && isMain) {
+        setTimeout(async () => {
+            try {
+                const cleanNumber = sanitizePhone(targetPairingNumber);
+                if (cleanNumber) {
+                    const code = await Hanz.requestPairingCode(cleanNumber);
+                    const formattedCode = code?.match(/.{1,4}/g)?.join('-') || code;
+                    console.log(chalk.black.bgGreen.bold(`\n 🔑 PAIRING CODE WHATSAPP LU: ${formattedCode} \n`));
+                    console.log(chalk.yellow(`👉 Buka WA di HP -> Linked Devices -> Link with Phone Number -> Masukin kode di atas!`));
+                } else {
+                    console.log(chalk.red('\n❌ PAIRING_NUMBER tidak diisi atau formatnya salah di Environment Variable Railway!'));
+                }
+            } catch (err) {
+                console.error(chalk.red('❌ Gagal meminta Pairing Code:'), err.message);
+            }
+        }, 3000);
+    }
+
     const messageHandler = require('./src/handlers/messageHandler');
     Hanz.ev.on('messages.upsert', (m) => {
         messageHandler(Hanz, m, isMain);
@@ -189,8 +211,8 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     Hanz.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Cetak QR Code otomatis ke terminal / log Railway menggunakan qrcode-terminal
-        if (qr && !Hanz.authState.creds.registered && isMain) {
+        // Cetak QR Code HANYA JIKA TIDAK MEMAKAI PAIRING CODE
+        if (qr && !Hanz.authState.creds.registered && isMain && !usePairingCode) {
             console.log(chalk.cyan('\n📱 SCAN QR CODE DI BAWAH INI DENGAN WHATSAPP HP LU:'));
             qrcode.generate(qr, { small: true });
         }
@@ -209,15 +231,13 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 clearSessionFolder(authFolder);
                 delete global.conns[instanceKey];
 
-                // Jika penyebabnya dari SESSION_BASE64 yang mati, kunci restore berikutnya!
                 if (process.env.SESSION_BASE64) {
                     envSessionFailed = true;
-                    console.log(chalk.red.bold('\n❌ ERROR: SESSION_BASE64 di Railway sudah TIDAK VALID / EXPIRED!'));
-                    console.log(chalk.yellow('👉 Silakan buat Base64 dari creds.json baru di lokal, lalu perbarui variabel SESSION_BASE64 di Railway.\n'));
+                    console.log(chalk.red.bold('\n❌ SESSION_BASE64 EXPIRED/LOGGED OUT! Restoring dimatikan sementara.'));
                 }
 
                 if (isMain) {
-                    console.log(chalk.yellow('[!] Jeda 5 detik sebelum memuat QR Code baru...'));
+                    console.log(chalk.yellow('[!] Jeda 5 detik sebelum memuat QR/Pairing Code baru...'));
                     await delay(5000);
                     return startBot(authFolder, isMain, customPhone);
                 }
@@ -233,7 +253,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             startBot(authFolder, isMain, customPhone);
 
         } else if (connection === 'open') {
-            envSessionFailed = false; // Reset status jika berhasil konek
+            envSessionFailed = false;
             const name = Hanz.user?.name || Hanz.user?.id?.split(':')[0] || 'Unknown';
 
             if (isMain) {
