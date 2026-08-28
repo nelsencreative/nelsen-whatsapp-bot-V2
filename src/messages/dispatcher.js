@@ -217,20 +217,17 @@ async function dispatchNotification(sock, body) {
         case "custom_message": {
           // Expected record shape: { target: string (phone number), message: string }
           const target = stringField(record, "target") || stringField(body, "target");
+          const target = stringField(record, "target") || stringField(body, "target");
           const text = stringField(record, "message") || stringField(body, "message");
--          if (!target || !text) {
--            return { ok: false, type, reason: "missing target or message" };
--          }
--          const targetJid = phoneToJid(target);
-+          if (!target || !text) {
-+            return { ok: false, type, reason: "missing target or message" };
-+          }
-+          // Jika target sudah berupa JID (mengandung '@'), gunakan langsung; jika hanya nomor, konversi.
-+          const targetJid = target.includes("@") ? target : phoneToJid(target);
-           const result = await sendTextFallback(sock, targetJid, text);
-           log.info({ type, target, ok: result.ok, err: result.error }, "custom_message sent");
-           return { ok: result.ok, type };
-         }
+          if (!target || !text) {
+            return { ok: false, type, reason: "missing target or message" };
+          }
+          // Jika target sudah berupa JID (mengandung '@'), gunakan langsung; jika hanya nomor, konversi.
+          const targetJid = target.includes("@") ? target : phoneToJid(target);
+          const result = await sendTextFallback(sock, targetJid, text);
+          log.info({ type, target, ok: result.ok, err: result.error }, "custom_message sent");
+          return { ok: result.ok, type };
+        }
         }
     }
   } catch (e) {
