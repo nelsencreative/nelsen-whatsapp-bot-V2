@@ -214,8 +214,18 @@ async function dispatchNotification(sock, body) {
         return { ok: result.ok, type };
       }
 
-      default:
-        return { ok: false, type, reason: "unknown type" };
+        case "custom_message": {
+          // Expected record shape: { target: string (phone number), message: string }
+          const target = stringField(record, "target") || stringField(body, "target");
+          const text = stringField(record, "message") || stringField(body, "message");
+          if (!target || !text) {
+            return { ok: false, type, reason: "missing target or message" };
+          }
+          const targetJid = phoneToJid(target);
+          const result = await sendTextFallback(sock, targetJid, text);
+          log.info({ type, target, ok: result.ok, err: result.error }, "custom_message sent");
+          return { ok: result.ok, type };
+        }
     }
   } catch (e) {
     log.error(
@@ -267,7 +277,8 @@ function normalizePayload(body) {
       t === "invoice_sent" ||
       t === "report_user" ||
       t === "deploy_success" ||
-      t === "deploy_failed"
+      t === "deploy_failed" ||
+      t === "custom_message"
     ) {
       const record = body.record ?? null;
       return { type: t, record };
