@@ -280,7 +280,8 @@ function normalizePayload(body) {
       t === "deploy_failed" ||
       t === "custom_message"
     ) {
-      const record = body.record ?? null;
+      // Untuk custom_message, record adalah seluruh body karena target & message di root
+      const record = t === "custom_message" ? body : (body.record ?? null);
       return { type: t, record };
     }
   }
