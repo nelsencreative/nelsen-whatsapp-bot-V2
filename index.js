@@ -15,6 +15,7 @@ Thank To
 
 
 */
+const qrcode = require('qrcode-terminal');
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const {
     useMultiFileAuthState,
@@ -114,9 +115,7 @@ function clearSessionFolder(folderPath) {
 
 plugins.init();
 
-let phoneNumber = null;
 let isFirstConnect = true;
-let isPairingRequested = false;
 
 global.conns = global.conns || {};
 let pairingRequests = {};
@@ -130,6 +129,23 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     if (process.env.RESET_SESSION === 'true') {
         console.log(chalk.red('🧹 Reset session dipicu via Environment Variable...'));
         clearSessionFolder(authFolder);
+    }
+
+    // --- AUTO-RESTORE SESSION DARI SESSION_BASE64 ---
+    if (process.env.SESSION_BASE64) {
+        try {
+            if (!fs.existsSync(authFolder)) {
+                fs.mkdirSync(authFolder, { recursive: true });
+            }
+            const credsPath = path.join(authFolder, 'creds.json');
+            if (!fs.existsSync(credsPath)) {
+                const decodedCreds = Buffer.from(process.env.SESSION_BASE64, 'base64').toString('utf-8');
+                fs.writeFileSync(credsPath, decodedCreds);
+                console.log(chalk.green('✅ Session berhasil di-restore dari Environment Variable SESSION_BASE64!'));
+            }
+        } catch (err) {
+            console.error(chalk.red('❌ Gagal auto-restore session dari SESSION_BASE64:'), err.message);
+        }
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
@@ -146,7 +162,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
         logger,
         printQRInTerminal: false,
         auth: state,
-        browser: Browsers.ubuntu('Desktop'), // Browser lebih stabil untuk Pairing Code
+        browser: ['Ubuntu', 'Chrome', '126.0.0.0'],
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
         markOnlineOnConnect: false,
@@ -172,39 +188,13 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
     Hanz.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        if (qr && !Hanz.authState.creds.registered && isMain && !isPairingRequested) {
-            isPairingRequested = true;
-            
-            if (!phoneNumber) {
-                const envPhone = process.env.PHONE_NUMBER;
-                if (envPhone) {
-                    phoneNumber = sanitizePhone(envPhone);
-                } else {
-                    console.log(chalk.cyan('=== WHATSAPP BOT PAIRING ==='));
-                    const input = await question(chalk.green('📱 Masukkan Nomor WhatsApp: '));
-                    phoneNumber = sanitizePhone(input);
-                }
-            } else {
-                phoneNumber = sanitizePhone(phoneNumber);
-            }
-
-            console.log(chalk.gray('⏳ Socket WhatsApp siap, meminta Pairing Code...'));
-
-            setTimeout(async () => {
-                try {
-                    let pairingCode = await Hanz.requestPairingCode(phoneNumber);
-                    pairingCode = pairingCode?.match(/.{1,4}/g)?.join('-') || pairingCode;
-                    console.log(chalk.magenta(`\n[➔] PAIRING CODE ANDA: `) + chalk.white.bold(pairingCode));
-                    console.log(chalk.gray('Silakan masukkan kode di atas pada menu: Linked Devices -> Link with phone number\n'));
-                } catch (err) {
-                    console.log(chalk.red(`[!] Gagal minta pairing code: ${err.message}`));
-                    isPairingRequested = false;
-                }
-            }, 2000);
+        // Cetak QR Code otomatis ke terminal menggunakan qrcode-terminal
+        if (qr && !Hanz.authState.creds.registered && isMain) {
+            console.log(chalk.cyan('\n📱 SCAN QR CODE DI BAWAH INI DENGAN WHATSAPP HP LU:'));
+            qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'close') {
-            isPairingRequested = false;
             if (isMain) {
                 try { spinnies.remove("waiting"); } catch (e) { }
             }
@@ -219,7 +209,7 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
                 delete global.conns[instanceKey];
 
                 if (isMain) {
-                    console.log(chalk.yellow('[!] Jeda 5 detik sebelum meminta Pairing Code baru...'));
+                    console.log(chalk.yellow('[!] Jeda 5 detik sebelum memuat QR Code baru...'));
                     await delay(5000);
                     return startBot(authFolder, isMain, customPhone);
                 }
@@ -235,7 +225,6 @@ async function startBot(authFolder = config.authFolder, isMain = true, customPho
             startBot(authFolder, isMain, customPhone);
 
         } else if (connection === 'open') {
-            isPairingRequested = false;
             const name = Hanz.user?.name || Hanz.user?.id?.split(':')[0] || 'Unknown';
 
             if (isMain) {
