@@ -1,7 +1,7 @@
 const fs = require('fs');
 const config = require('../config');
 
-if (global.botMode === undefined) global.botMode = config.botMode;
+if (global.botMode === undefined) global.botMode = config.botMode || 'public';
 const plugins = require('../utils/PluginLoader');
 const chalk = require('chalk');
 const readline = require('readline');
@@ -21,16 +21,6 @@ const COOLDOWN_EXEMPT = new Set([
     'afk', 'welcome', 'goodbye', 'antilink',
 ]);
 const cooldownMap = new Map();
-
-const welcomeGroups = new Map();
-const goodbyeGroups = new Map();
-const antilinkGroups = new Map();
-
-global.welcomeGroups = welcomeGroups;
-global.goodbyeGroups = goodbyeGroups;
-global.antilinkGroups = antilinkGroups;
-
-global.afkUsers = global.afkUsers || new Map();
 
 setInterval(() => {
     const now = Date.now();
@@ -124,12 +114,6 @@ function parseCommand(text) {
     const { prefix } = config;
     const prefixes = Array.isArray(prefix) ? prefix : [prefix];
 
-    // Find the first matching prefix character. `String.prototype.startsWith`
-    // coerces an array to its comma-joined form (e.g. "!,.,/,#,?") which
-    // never matches a real message — so we iterate explicitly. The match
-    // also has to be a SINGLE character; multi-char strings (e.g. ".!") are
-    // skipped so we don't accidentally treat ".!menu" as a prefixed
-    // command starting with ".".
     const leading = text.charAt(0);
     if (prefixes.includes(leading)) {
         const args = text.slice(1).trim().split(/ +/);
@@ -151,13 +135,23 @@ async function handleMessages(Hanz, m, isMain = true) {
     for (const msg of m.messages) {
         if (!msg.message) continue;
 
-        const fromMe = isFromMe(msg);
         const sender = msg.key.remoteJid;
 
-        const checkOwner = isOwner(sender, msg);
+        // =========================================================================
+        // ⛔ ABSOLUTE FILTER GRUP: BOT CUMA RESPON DI PESAN PRIBADI (PM/JAPRI) ⛔
+        // =========================================================================
+        if (isGroup(sender)) continue;
+
+        const fromMe = isFromMe(msg);
         const checkSuperOwner = isSuperOwner(sender, msg);
         const checkCoOwner = isCoOwner(sender, msg);
+        const checkOwner = isOwner(sender, msg); // True jika Super Owner, Co-Owner, atau Bot Sendiri
 
+        // =========================================================================
+        // 🔒 CHECK MODE SELF VS PUBLIC
+        // - Mode 'self'   : Cuma Owner, Super Owner, Co-Owner yang bisa akses AI & Command.
+        // - Mode 'public' : Semua orang di Pesan Pribadi (PM) bisa akses.
+        // =========================================================================
         if (!fromMe && global.botMode === 'self' && !checkOwner) continue;
 
         const text = extractMessageText(msg.message);
@@ -168,54 +162,37 @@ async function handleMessages(Hanz, m, isMain = true) {
             readline.cursorTo(process.stdout, 0);
 
             console.log(
-                chalk.blue(`[INBOUND] `) +
+                chalk.blue(`[INBOUND PM] `) +
                 chalk.cyan(sender) +
-                chalk.white(`: ${text}`)
+                chalk.white(` (${msg.pushName || 'User'}): ${text}`)
             );
         }
 
         if (config.autoRead) await Hanz.readMessages([msg.key]);
-        if (config.autoTyping && !isGroup(sender)) await Hanz.sendPresenceUpdate('composing', sender);
+        if (config.autoTyping) await Hanz.sendPresenceUpdate('composing', sender);
 
-        if (isGroup(sender) && global.antilinkGroups?.get(sender) && !checkOwner) {
-            const linkRegex = /https?:\/\/|wa\.me\/|chat\.whatsapp\.com\/|bit\.ly\/|t\.me\//i;
-            if (linkRegex.test(text)) {
-                try {
-                    await Hanz.sendMessage(sender, { delete: msg.key });
-                    await Hanz.sendMessage(sender, {
-                        text: `@${getSenderNumber(sender, msg)} dilarang mengirim link di grup ini!`,
-                        mentions: [msg.key.participant || sender]
-                    });
-                } catch { }
-                continue;
-            }
+        // =========================================================================
+        // 🚀 FORWARD PESAN KE N8N WEBHOOK (N8N 9ROUTER AI & COMMAND CONTROL)
+        // Hanya pesan dari user lain (bukan bot sendiri) yang dilempar ke n8n
+        // =========================================================================
+        if (!fromMe) {
+            const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n.nelsen.web.id/webhook/wa-inbound';
+            fetch(n8nWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    from: sender,
+                    text: text,
+                    pushName: msg.pushName || 'User',
+                    isOwner: checkOwner,
+                    isSuperOwner: checkSuperOwner
+                })
+            }).catch(err => console.error(chalk.red('[N8N-WEBHOOK-ERROR]:'), err.message));
         }
 
-        if (isGroup(sender) && global.afkUsers?.size > 0) {
-            const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-            for (const jid of mentioned) {
-                const num = jid.split('@')[0];
-                if (global.afkUsers.has(num)) {
-                    const { reason, time } = global.afkUsers.get(num);
-                    const elapsed = Math.floor((Date.now() - time) / 1000);
-                    const dur = elapsed < 60 ? `${elapsed} detik` : elapsed < 3600 ? `${Math.floor(elapsed/60)} menit` : `${Math.floor(elapsed/3600)} jam`;
-                    await Hanz.sendMessage(sender, {
-                        text: `@${num} sedang AFK selama ${dur}\nAlasan: ${reason}`,
-                        mentions: [jid]
-                    });
-                }
-            }
-        }
-
-        if (!fromMe && global.afkUsers?.has(getSenderNumber(sender, msg))) {
-            const num = getSenderNumber(sender, msg);
-            global.afkUsers.delete(num);
-            await Hanz.sendMessage(sender, {
-                text: `Selamat datang kembali @${num}! Status AFK kamu telah dihapus.`,
-                mentions: [msg.key.participant || sender]
-            });
-        }
-
+        // =========================================================================
+        // 🛠️ EKSEKUSI COMMAND LOKAL (JIKA DITEMUKAN PLUGIN LOKAL)
+        // =========================================================================
         const command = parseCommand(text);
 
         if (command) {
@@ -252,7 +229,7 @@ async function handleMessages(Hanz, m, isMain = true) {
                         Hanz, msg, sender,
                         senderNumber: getSenderNumber(sender, msg),
                         pushname: msg.pushName || 'Kak',
-                        isGroup: isGroup(sender),
+                        isGroup: false,
                         isOwner: checkOwner,
                         isSuperOwner: checkSuperOwner,
                         isCoOwner: checkCoOwner,
@@ -280,44 +257,16 @@ async function handleMessages(Hanz, m, isMain = true) {
                     );
                     await Hanz.sendMessage(sender, { text: '❌ Terjadi kesalahan saat menjalankan perintah.' });
                 }
-            } else {
-                readline.clearLine(process.stdout, 0);
-                readline.cursorTo(process.stdout, 0);
-
-                console.log(
-                    chalk.magenta(`[NOT-FOUND] `) +
-                    chalk.white(`Command `) +
-                    chalk.yellow(`*${command.name}*`) +
-                    chalk.white(` tidak terdaftar.`)
-                );
-                await Hanz.sendMessage(sender, { text: `❓ Command *${command.name}* tidak ditemukan.` });
             }
         }
 
-        if (config.autoTyping && !isGroup(sender)) await Hanz.sendPresenceUpdate('paused', sender);
+        if (config.autoTyping) await Hanz.sendPresenceUpdate('paused', sender);
     }
 }
 
 async function handleGroupParticipants(Hanz, update) {
-    const { id: groupJid, participants, action } = update;
-
-    for (const jid of participants) {
-        const number = jid.split('@')[0];
-
-        if (action === 'add' && global.welcomeGroups?.get(groupJid)) {
-            await Hanz.sendMessage(groupJid, {
-                text: `Selamat datang @${number} di grup ini!`,
-                mentions: [jid]
-            });
-        }
-
-        if (action === 'remove' && global.goodbyeGroups?.get(groupJid)) {
-            await Hanz.sendMessage(groupJid, {
-                text: `Sampai jumpa @${number}, semoga sukses!`,
-                mentions: [jid]
-            });
-        }
-    }
+    // Diposting kosong / abaikan event grup
+    return;
 }
 
 module.exports = handleMessages;
