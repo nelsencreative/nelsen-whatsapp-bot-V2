@@ -231,8 +231,8 @@ async function dispatchNotification(sock, body) {
         default:
           return { ok: false, type, reason: "unknown type" };
         }
-    }
-  } catch (e) {
+        // end of switch – the following catch belongs to the try above
+      } catch (e) {
     log.error(
       { err: e?.message || String(e), type },
       "dispatchNotification crashed",
