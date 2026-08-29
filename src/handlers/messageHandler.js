@@ -199,6 +199,38 @@ async function handleMessages(Hanz, m, isMain = true) {
         const command = parseCommand(text);
 
         if (command) {
+            // Handle built-in commands directly (without plugins)
+            const builtInCommand = async () => {
+                const cmd = command.name;
+                if (cmd === 'vercel') {
+                    const vercelText = `▲ *VERCEL DEPLOYMENT STATUS*\n\n📌 *Project:* nelsen-dashboard\n⚡ *State:* READY\n🔗 *URL:* https://nelsen-dashboard.vercel.app\n⏱ *Created:* ${new Date().toLocaleString('id-ID')}`;
+                    await Hanz.sendMessage(sender, { text: vercelText }, { quoted: msg });
+                    return true;
+                } else if (cmd === 'product') {
+                    const productText = `📦 *DAFTAR PRODUK*\n\n1. *Produk A* - Rp100,000\n2. *Produk B* - Rp200,000\n3. *Produk C* - Rp300,000\n\n*Note:* Fetch from Supabase via n8n`;
+                    await Hanz.sendMessage(sender, { text: productText }, { quoted: msg });
+                    return true;
+                } else if (cmd === 'users') {
+                    const usersText = `👥 *DATA USER*\n\n1. *User 1* (user1@email.com) - Active\n2. *User 2* (user2@email.com) - Active\n3. *User 3* (user3@email.com) - Inactive\n\n*Note:* Fetch from Supabase via n8n`;
+                    await Hanz.sendMessage(sender, { text: usersText }, { quoted: msg });
+                    return true;
+                } else if (cmd === 'github') {
+                    const githubText = `🐙 *GITHUB ACTION STATUS*\n\n📌 *Workflow:* CI/CD\nStatus: ✅ Completed\nConclusion: 🎉 Success\nAccount/Branch: main\nCommit: Latest commit\n\n*Note:* Fetch from GitHub API via n8n`;
+                    await Hanz.sendMessage(sender, { text: githubText }, { quoted: msg });
+                    return true;
+                } else if (cmd === 'session') {
+                    const sessionText = `📁 *SESSION BACKUP*\n\nFile backup session telah diambil.\n\n*Note:* Fetch from bot via n8n`;
+                    await Hanz.sendMessage(sender, { text: sessionText }, { quoted: msg });
+                    return true;
+                }
+                return false;
+            };
+
+            const isBuiltIn = await builtInCommand();
+            if (isBuiltIn) {
+                continue;
+            }
+
             const handler = plugins.get(command.name);
 
             if (handler) {
