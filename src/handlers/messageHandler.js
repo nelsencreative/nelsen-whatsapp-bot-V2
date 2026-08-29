@@ -175,11 +175,10 @@ async function handleMessages(Hanz, m, isMain = true) {
         if (config.autoTyping) await Hanz.sendPresenceUpdate('composing', sender);
 
         // =========================================================================
-        // 🚀 FORWARD PESAN KE N8N WEBHOOK (N8N 9ROUTER AI & COMMAND CONTROL)
-        // Format JID dipastikan selalu @s.whatsapp.net agar balasan n8n presisi
+        // 🚀 FORWARD PESAN KE N8N WEBHOOK (HANYA UNTUK NON-COMMAND MESSAGES)
         // =========================================================================
-        if (!fromMe) {
-            const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n.nelsen.web.id/webhook/wa-inbound';
+        if (!fromMe && !command) {
+            const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n.nelsen.web.id/webhook-test/wa-inbound';
             fetch(n8nWebhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
