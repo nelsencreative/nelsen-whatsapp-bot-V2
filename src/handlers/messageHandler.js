@@ -175,6 +175,11 @@ async function handleMessages(Hanz, m, isMain = true) {
         if (config.autoTyping) await Hanz.sendPresenceUpdate('composing', sender);
 
         // =========================================================================
+        // 🛠️ PARSE COMMAND TERLEBIH DAHULU
+        // =========================================================================
+        const command = parseCommand(text);
+
+        // =========================================================================
         // 🚀 FORWARD PESAN KE N8N WEBHOOK (HANYA UNTUK NON-COMMAND MESSAGES)
         // =========================================================================
         if (!fromMe && !command) {
@@ -195,7 +200,6 @@ async function handleMessages(Hanz, m, isMain = true) {
         // =========================================================================
         // 🛠️ EKSEKUSI COMMAND LOKAL (JIKA DITEMUKAN PLUGIN LOKAL)
         // =========================================================================
-        const command = parseCommand(text);
 
         if (command) {
             const handler = plugins.get(command.name);
