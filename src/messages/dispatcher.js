@@ -1,6 +1,7 @@
 /**
+ * By Nelsen
  * Shared notification dispatcher.
- *
+ * 
  * Both the HTTP `/notify` handler and the Supabase Realtime listener
  * funnel into this single function so there is exactly one place that
  * owns the "what does a new_order mean and how do we send it?" logic.
