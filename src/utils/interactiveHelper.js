@@ -280,9 +280,12 @@ async function sendCtaUrlButton(Hanz, jid, content) {
  */
 async function sendTextFallback(Hanz, jid, text) {
     try {
-        await Hanz.sendMessage(jid, { text });
-        return { ok: true };
+        const result = await Hanz.sendMessage(jid, { text });
+        // Log untuk debugging - result mungkin berisi metadata pengiriman
+        console.log(`[sendTextFallback] Mengirim ke ${jid}: ${text.substring(0, 50)}...`);
+        return { ok: true, result };
     } catch (err) {
+        console.error(`[sendTextFallback] Error mengirim ke ${jid}:`, err?.message || String(err));
         return { ok: false, error: err?.message || String(err) };
     }
 }
