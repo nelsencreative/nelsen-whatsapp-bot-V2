@@ -280,12 +280,19 @@ async function sendCtaUrlButton(Hanz, jid, content) {
  */
 async function sendTextFallback(Hanz, jid, text) {
     try {
+        // Validasi jid tidak kosong dan berformat JID yang valid
+        if (!jid || typeof jid !== 'string' || !jid.includes('@')) {
+            console.error(`[sendTextFallback] Invalid JID: ${jid}`);
+            return { ok: false, error: `Invalid JID: ${jid}` };
+        }
+        
         const result = await Hanz.sendMessage(jid, { text });
-        // Log untuk debugging - result mungkin berisi metadata pengiriman
-        console.log(`[sendTextFallback] Mengirim ke ${jid}: ${text.substring(0, 50)}...`);
+        // Log detail untuk debugging
+        console.log(`[sendTextFallback] SUCCESS Mengirim ke ${jid}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+        console.log(`[sendTextFallback] Result:`, JSON.stringify(result?.key || {}));
         return { ok: true, result };
     } catch (err) {
-        console.error(`[sendTextFallback] Error mengirim ke ${jid}:`, err?.message || String(err));
+        console.error(`[sendTextFallback] ERROR mengirim ke ${jid}:`, err?.message || String(err));
         return { ok: false, error: err?.message || String(err) };
     }
 }
