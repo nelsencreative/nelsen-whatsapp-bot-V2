@@ -1,7 +1,6 @@
 /**
- * By Nelsen
  * Shared notification dispatcher.
- * 
+ *
  * Both the HTTP `/notify` handler and the Supabase Realtime listener
  * funnel into this single function so there is exactly one place that
  * owns the "what does a new_order mean and how do we send it?" logic.
@@ -213,7 +212,7 @@ async function dispatchNotification(sock, body) {
           "report_user sent",
         );
         return { ok: result.ok, type };
-      }
+        }
 
         case "custom_message": {
           // Expected record shape: { target: string (phone number), message: string }
@@ -228,6 +227,9 @@ async function dispatchNotification(sock, body) {
           log.info({ type, target, ok: result.ok, err: result.error }, "custom_message sent");
           return { ok: result.ok, type };
         }
+
+        default:
+          return { ok: false, type, reason: "unknown type" };
         }
     }
   } catch (e) {
