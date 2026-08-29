@@ -15,14 +15,14 @@ module.exports = {
 
     // Co-Owner — bisa lebih dari satu, akses owner biasa
     coOwner: [
-        // '6289999999999',
+        '6287811007088', '6285733370411'
     ],
 
     // Mode bot: 'public' → semua orang | 'self' → hanya owner
     botMode: 'self',
 
     // Otomatis centang biru pesan yang masuk
-    autoRead: true,
+    autoRead: false,
 
     // Tampilkan indikator "mengetik..." saat membalas
     autoTyping: true,
@@ -37,7 +37,7 @@ module.exports = {
     // LICENSE CONFIG (TAMBAH INI)
     // ═══════════════════════════════════════════════════════
     licenseKey: 'OTP-xxxxx',                    // ← Kode dari kamu
-    botNumber: '6287811007088',                         // ← Nomor WA bot ini
+    botNumber: '6285733370411',                         // ← Nomor WA bot ini
 
     // ═══════════════════════════════════════════════════════
     // URL UNTUK BUTTON `!send`
