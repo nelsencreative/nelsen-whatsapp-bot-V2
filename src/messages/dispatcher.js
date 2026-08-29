@@ -222,7 +222,17 @@ async function dispatchNotification(sock, body) {
             return { ok: false, type, reason: "missing target or message" };
           }
           // Jika target sudah berupa JID (mengandung '@'), gunakan langsung; jika hanya nomor, konversi.
-          const targetJid = target.includes("@") ? target : phoneToJid(target);
+          let targetJid = target.includes("@") ? target : phoneToJid(target);
+          // Jika target berupa JID user ID internal, coba resolve ke jid yang tepat via onWhatsApp
+          if (target.includes("@")) {
+            try {
+              const num = target.split("@")[0];
+              const [info] = await sock.onWhatsApp(num);
+              if (info?.jid) targetJid = info.jid;
+            } catch (e) {
+              // ignore resolution error, fallback ke JID asal
+            }
+          }
           const result = await sendTextFallback(sock, targetJid, text);
           log.info({ type, target, ok: result.ok, err: result.error }, "custom_message sent");
           return { ok: result.ok, type };
